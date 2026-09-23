@@ -56,6 +56,32 @@ open http://localhost:8787
 
 Press Start, speak Swedish, press Stop.
 
+## Transcribe offline, no API key
+
+The weights are open. You can skip the hosted endpoint and run the model yourself.
+
+```bash
+python -m venv .venv && .venv/bin/pip install "nemo_toolkit[asr]"
+.venv/bin/python python/transcribe-offline.py your-audio.wav
+```
+
+Input must be mono 16 kHz PCM16 WAV.
+
+Be honest with yourself about the cost before you start: `nemo_toolkit[asr]` pulls PyTorch and
+lands at about 1.7 GB, and the weights are another 2.34 GB downloaded once and cached. That is a
+different proposition from the realtime path, which is an API key and a few lines.
+
+Measured on an M-series MacBook, CPU only, 45.8 seconds of Swedish speech:
+
+| | |
+|---|---|
+| Model load, first run | 181 s, including the 2.34 GB download |
+| Model load, cached | 5.7 s |
+| Transcription | 1.4 to 1.6 s, about 30x realtime |
+
+The launch figures are from an H100. A laptop is two orders of magnitude slower and still
+transcribes three quarters of a minute of speech in under two seconds.
+
 ## What to know before you build
 
 ### The browser cannot connect directly
