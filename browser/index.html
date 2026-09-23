@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pianissimo realtime</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #14161a;
+    --muted: #5d636e;
+    --line: #e3e6ea;
+    --accent: #1a56db;
+    --live: #0f7b4f;
+    --err: #b42318;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #101216; --fg: #e9ecf1; --muted: #9aa1ac; --line: #262a31;
+      --accent: #7aa2f7; --live: #4ade80; --err: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 16px; background: var(--bg); color: var(--fg);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  p.sub { margin: 0 0 24px; color: var(--muted); }
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  button {
+    font: inherit; font-weight: 550; padding: 9px 18px; border-radius: 8px;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer;
+  }
+  button.secondary { background: transparent; color: var(--fg); border-color: var(--line); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  label { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  input[type=number] {
+    font: inherit; width: 68px; padding: 7px 8px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+  }
+  #status { color: var(--muted); margin-bottom: 16px; font-variant-numeric: tabular-nums; }
+  #status.live { color: var(--live); }
+  #status.err { color: var(--err); }
+  #out {
+    min-height: 140px; padding: 16px; border: 1px solid var(--line); border-radius: 10px;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  #out:empty::before { content: "Transcript appears here."; color: var(--muted); }
+  details { margin-top: 20px; }
+  summary { color: var(--muted); cursor: pointer; }
+  #log {
+    margin-top: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px;
+    font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--muted); white-space: pre-wrap; max-height: 220px; overflow: auto;
+  }
+  footer { margin-top: 28px; color: var(--muted); font-size: 13px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Pianissimo realtime</h1>
+  <p class="sub">Swedish speech to text while you speak. Model <code>klang/pianissimo</code> on Berget AI.</p>
+
+  <div class="controls">
+    <button id="start">Start</button>
+    <button id="stop" class="secondary" disabled>Stop</button>
+    <label for="chunk">chunk_seconds
+      <input id="chunk" type="number" min="0" max="10" step="1" value="1">
+    </label>
+  </div>
+
+  <div id="status">Idle</div>
+  <div id="out"></div>
+
+  <details>
+    <summary>Event log</summary>
+    <div id="log"></div>
+  </details>
+
+  <footer>
+    Set <code>chunk_seconds</code> to 0 to leave it unset. The server default is 28 s, so nothing
+    appears until you have spoken that long. Lower values return text sooner and transcribe
+    slightly worse.
+  </footer>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
