@@ -156,6 +156,31 @@ afterwards wants a higher value or the default.
 only `klang/pianissimo` and rejects everything else. Pianissimo is a streaming model here; for
 finished recordings Berget offers other models on the batch endpoint.
 
+## Reproducing the first-word loss
+
+`repro/first-word.mjs` runs one audio file through two sessions. The only difference between them
+is `chunk_seconds`. Audio, pacing, sample rate and model are identical.
+
+```bash
+BERGET_API_KEY=sk_ber_... node repro/first-word.mjs
+```
+
+```
+--- run A: chunk_seconds unset (server applied 28)
+    opening word: KEPT
+    1. Stockholm är Sveriges huvudstad. 2. Göteborg ligger på västkusten. ...
+
+--- run B: chunk_seconds 3 (server applied 3)
+    opening word: LOST
+    Stockholm är Sveriges huvudstad. Två. Göteborg ligger på V. Tre. ...
+```
+
+The clip is 12.2 s, shorter than the 28 s default, so run A is never segmented by the timer and
+its turn closes on commit. Run B segments every 3 s and loses the opening word.
+
+The same weights run locally keep the word, so this sits in the streaming path rather than in the
+model. `repro/make-audio.sh` regenerates the clip with macOS text to speech if you want your own.
+
 ## License
 
 MIT, matching [`klang-ai/klang-sdk-ts`](https://github.com/klang-ai/klang-sdk-ts). See `LICENSE`.
