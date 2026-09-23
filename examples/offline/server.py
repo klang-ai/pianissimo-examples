@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+"""Two offline Pianissimo apps on one local server.
+
+    .venv/bin/python examples/offline/server.py
+
+Then open http://127.0.0.1:8765 and pick one:
+
+  /podcast    Drop in a podcast, get the transcript, a summary and chapters.
+  /dictation  Talk, and the text appears as you speak.
+
+Everything runs on this machine. The speech model, the summary model and the
+server all bind to 127.0.0.1 and read their weights from the local cache, so
+both apps work in flight mode once the weights have been downloaded once.
+First run with --online to download them.
+"""
+
+import argparse
+import asyncio
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+ap = argparse.ArgumentParser(description=__doc__,
+                             formatter_class=argparse.RawDescriptionHelpFormatter)
+ap.add_argument("--port", type=int, default=8765)
+ap.add_argument("--device", help="cuda, mps or cpu (default: the fastest available)")
+ap.add_argument("--online", action="store_true",
+                help="allow Hugging Face downloads, for the first run only")
+ap.add_argument("--no-summary", action="store_true",
+                help="skip the summary model and only transcribe")
+ap.add_argument("--verbose", action="store_true")
+args = ap.parse_args()
+
+if args.online:
+    os.environ["HF_HUB_OFFLINE"] = "0"
+
+import numpy as np  # noqa: E402
+from aiohttp import WSMsgType, web  # noqa: E402
+
+import asr  # noqa: E402
+import summary  # noqa: E402
+
+RATE = asr.RATE
+# Pieces transcribed per step of a podcast job. Larger batches run faster in
+# total; smaller ones let the page show progress. Eight pieces is four minutes
+# of audio per step.
+PODCAST_STEP = 8
+
+
+# ---- podcast -----------------------------------------------------------------
+
+def decode_to_wav(src, dest):
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-vn", "-ac", "1",
+                    "-ar", str(RATE), "-c:a", "pcm_s16le", dest], check=True)
+
+
+def chapter_size(total_pieces):
+    """Pieces per chapter: aim for about eight chapters, two to ten minutes each."""
+    return max(4, min(20, -(-total_pieces // 8)))
+
+
+def podcast_job(engine, summarizer, path, emit):
+    """Runs in a worker thread. emit() sends one event to the page.
+
+    The summary is made in two passes so that a small local model stays fast.
+    Each chapter of a few minutes is summarised as soon as it is transcribed,
+    while the next one is still being transcribed, and the episode summary is
+    then written from the chapters rather than from the full transcript.
+    """
+    t_start = time.monotonic()
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = os.path.join(tmp, "audio.wav")
+        try:
+            decode_to_wav(path, wav)
+        except subprocess.CalledProcessError:
+            emit({"type": "error", "message": "ffmpeg could not read that file."})
+            return
+        audio = asr.load_wav(wav)
+    seconds = len(audio) / RATE
+    t_decoded = time.monotonic()
+    emit({"type": "start", "audioSeconds": seconds,
+          "decodeSeconds": t_decoded - t_start, "device": engine.device})
+
+    use_summary = summarizer is not None and not summarizer.problem and summarizer.wait()
+    pieces = engine.pieces(audio)
+    size = chapter_size(len(pieces))
+    pool = ThreadPoolExecutor(max_workers=summary.SLOTS)
+    chapters = []
+
+    def make_chapter(start, text):
+        try:
+            c = summarizer.chapter(text)
+        except OSError as e:
+            c = {"title": "", "gist": "", "quote": "", "error": str(e)}
+        c["start"] = start
+        emit({"type": "chapter", **c})
+        return c
+
+    texts = []
+    for i in range(0, len(pieces), PODCAST_STEP):
+        batch = pieces[i:i + PODCAST_STEP]
+        out = engine.transcribe([clip for _, clip in batch], batch_size=PODCAST_STEP)
+        for (start, _), text in zip(batch, out):
+            texts.append((start, text))
+            emit({"type": "piece", "start": start, "text": text})
+            if use_summary and len(texts) % size == 0:
+                window = texts[-size:]
+                chapters.append(pool.submit(make_chapter, window[0][0],
+                                            " ".join(t for _, t in window)))
+        emit({"type": "progress", "done": min(i + PODCAST_STEP, len(pieces)),
+              "total": len(pieces), "elapsed": time.monotonic() - t_decoded})
+    rest = len(texts) % size
+    if use_summary and rest:
+        window = texts[-rest:]
+        chapters.append(pool.submit(make_chapter, window[0][0],
+                                    " ".join(t for _, t in window)))
+    t_transcribed = time.monotonic()
+    words = sum(len(t.split()) for _, t in texts)
+    emit({"type": "transcribed", "seconds": t_transcribed - t_decoded, "words": words,
+          "audioSeconds": seconds})
+
+    if not use_summary:
+        emit({"type": "done", "summary": False,
+              "reason": (summarizer.problem or "summary model did not start")
+              if summarizer else "summary disabled",
+              "totalSeconds": time.monotonic() - t_start})
+        return
+
+    chapters = [f.result() for f in chapters]
+    pool.shutdown()
+    t_chapters = time.monotonic()
+    good = [c for c in chapters if c["title"]]
+    quotes = [c for c in good if c["quote"]]
+    # The longest verified quote tends to be the one that says something.
+    best = max(quotes, key=lambda c: len(c["quote"]), default=None)
+
+    emit({"type": "summary-start", "chaptersWaited": t_chapters - t_transcribed})
+    first = None
+    for delta in summarizer.stream(good):
+        if first is None:
+            first = time.monotonic() - t_chapters
+        emit({"type": "summary", "text": delta})
+    t_end = time.monotonic()
+    emit({"type": "done", "summary": True,
+          "quote": best and {"text": best["quote"], "start": best["start"]},
+          "summarySeconds": t_end - t_transcribed, "summaryFirstToken": first,
+          "totalSeconds": t_end - t_start})
+
+
+async def podcast(request):
+    reader = await request.multipart()
+    field = await reader.next()
+    if field is None or field.name != "file":
+        return web.json_response({"error": "send the audio as a form field named file"},
+                                 status=400)
+    suffix = os.path.splitext(field.filename or "")[1] or ".audio"
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    try:
+        while chunk := await field.read_chunk(1 << 20):
+            tmp.write(chunk)
+        tmp.close()
+
+        resp = web.StreamResponse(headers={"Content-Type": "application/x-ndjson",
+                                           "Cache-Control": "no-store"})
+        await resp.prepare(request)
+        loop = asyncio.get_running_loop()
+        queue = asyncio.Queue()
+
+        def emit(event):
+            loop.call_soon_threadsafe(queue.put_nowait, event)
+
+        app = request.app
+        job = loop.run_in_executor(None, podcast_job, app["engine"], app["summarizer"],
+                                   tmp.name, emit)
+        job.add_done_callback(lambda _: loop.call_soon_threadsafe(queue.put_nowait, None))
+        while (event := await queue.get()) is not None:
+            await resp.write((json.dumps(event, ensure_ascii=False) + "\n").encode())
+        await job
+        await resp.write_eof()
+        return resp
+    finally:
+        os.unlink(tmp.name)
+
+
+# ---- dictation ---------------------------------------------------------------
+
+# Re-transcribe the open segment each time this much new audio has arrived.
+PARTIAL_EVERY = 0.4
+# A segment closes after this much quiet, or when it reaches the maximum.
+ENDPOINT_SILENCE = 0.6
+MIN_SEGMENT = 0.8
+MAX_SEGMENT = 12.0
+FRAME = RATE // 10
+
+
+class Dictation:
+    """One microphone session: the open segment, its energy, and its text."""
+
+    def __init__(self):
+        self.audio = np.zeros(0, dtype=np.float32)
+        self.frame_rms = []
+        self.since_partial = 0
+        self.segment = 0
+        # Recent frame energies across segments, for the room's noise floor.
+        self.recent = []
+
+    def add(self, pcm16):
+        samples = np.frombuffer(pcm16, dtype=np.int16).astype(np.float32) / 32768.0
+        self.audio = np.concatenate([self.audio, samples])
+        self.since_partial += len(samples)
+        for i in range(0, len(samples) - FRAME + 1, FRAME):
+            rms = float(np.sqrt(np.mean(samples[i:i + FRAME] ** 2)))
+            self.frame_rms.append(rms)
+            self.recent = (self.recent + [rms])[-100:]
+
+    @property
+    def seconds(self):
+        return len(self.audio) / RATE
+
+    def speech_threshold(self):
+        # The quiet end of the last ten seconds is the room, not the speaker.
+        noise = float(np.percentile(self.recent, 15)) if self.recent else 0.003
+        return max(noise * 3.0, 0.008)
+
+    def has_speech(self):
+        thr = self.speech_threshold()
+        return sum(r > thr for r in self.frame_rms) >= 3
+
+    def ended(self):
+        if self.seconds >= MAX_SEGMENT:
+            return True
+        if self.seconds < MIN_SEGMENT or not self.has_speech():
+            return False
+        tail = self.frame_rms[-int(ENDPOINT_SILENCE * 10):]
+        return len(tail) >= int(ENDPOINT_SILENCE * 10) and max(tail) < self.speech_threshold()
+
+    def reset(self):
+        self.audio = np.zeros(0, dtype=np.float32)
+        self.frame_rms = []
+        self.since_partial = 0
+        self.segment += 1
+
+
+async def dictate(request):
+    ws = web.WebSocketResponse(max_msg_size=1 << 22)
+    await ws.prepare(request)
+    engine = request.app["engine"]
+    loop = asyncio.get_running_loop()
+    session = Dictation()
+    busy = False
+
+    async def run(clip, final, segment):
+        nonlocal busy
+        busy = True
+        t0 = time.monotonic()
+        try:
+            text = (await loop.run_in_executor(None, engine.transcribe, [clip], 1))[0]
+        finally:
+            busy = False
+        if not ws.closed:
+            # The page drops a partial whose segment has already been finalised.
+            await ws.send_json({"type": "final" if final else "partial", "text": text,
+                                "segment": segment,
+                                "audioSeconds": len(clip) / RATE,
+                                "ms": round((time.monotonic() - t0) * 1000)})
+
+    async def close_segment():
+        clip, speech, segment = session.audio.copy(), session.has_speech(), session.segment
+        session.reset()
+        if speech:
+            await run(clip, True, segment)
+        elif not ws.closed:
+            await ws.send_json({"type": "final", "text": "", "segment": segment})
+
+    async for msg in ws:
+        if msg.type == WSMsgType.BINARY:
+            session.add(msg.data)
+            if session.ended():
+                await close_segment()
+            elif (not busy and session.has_speech()
+                  and session.since_partial >= PARTIAL_EVERY * RATE):
+                session.since_partial = 0
+                loop.create_task(run(session.audio.copy(), False, session.segment))
+            elif not session.has_speech() and session.seconds > 3:
+                # Keep only the last second of silence so the buffer stays small.
+                session.audio = session.audio[-RATE:]
+                session.frame_rms = session.frame_rms[-10:]
+        elif msg.type == WSMsgType.TEXT:
+            if json.loads(msg.data).get("type") == "stop":
+                await close_segment()
+    return ws
+
+
+# ---- pages and status --------------------------------------------------------
+
+async def status(request):
+    app = request.app
+    s = app["summarizer"]
+    is_online = await asyncio.get_running_loop().run_in_executor(None, summary.online)
+    return web.json_response({
+        "online": is_online,
+        "device": app["engine"].device,
+        "model": asr.MODEL,
+        "summary": None if s is None else (s.problem or "ready"),
+    })
+
+
+def page(name):
+    async def handler(_):
+        return web.FileResponse(os.path.join(HERE, "static", name))
+    return handler
+
+
+def main():
+    print(f"loading {asr.MODEL} from the local cache", file=sys.stderr)
+    try:
+        engine = asr.Engine(device=args.device, verbose=args.verbose)
+    except Exception as e:  # the most likely cause by far is a missing download
+        sys.exit(f"could not load {asr.MODEL}: {e}\n"
+                 "If this is the first run, start once with --online to download it.")
+    asr.warm_up(engine)
+    print(f"ready on {engine.device}, loaded in {engine.load_seconds:.1f} s", file=sys.stderr)
+
+    summarizer = None if args.no_summary else summary.Summarizer()
+    if summarizer:
+        if summarizer.problem:
+            print(f"summary off: {summarizer.problem}", file=sys.stderr)
+        else:
+            summarizer.start()
+
+    app = web.Application(client_max_size=1 << 31)
+    app["engine"] = engine
+    app["summarizer"] = summarizer
+    app.router.add_get("/", page("index.html"))
+    app.router.add_get("/podcast", page("podcast.html"))
+    app.router.add_get("/dictation", page("dictation.html"))
+    app.router.add_get("/api/status", status)
+    app.router.add_post("/api/podcast", podcast)
+    app.router.add_get("/ws/dictate", dictate)
+    app.router.add_static("/static", os.path.join(HERE, "static"))
+    async def stop_summarizer(_):
+        if summarizer:
+            summarizer.stop()
+    app.on_shutdown.append(stop_summarizer)
+
+    print(f"open http://127.0.0.1:{args.port}", file=sys.stderr)
+    web.run_app(app, host="127.0.0.1", port=args.port, print=None)
+
+
+if __name__ == "__main__":
+    main()

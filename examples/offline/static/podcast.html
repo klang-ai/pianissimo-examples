@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Podcast Summary</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <a class="brand" href="/">Pianissimo <span>offline</span></a>
+    <span class="net" id="net">Checking network</span>
+  </header>
+
+  <h1>A whole episode, read in a minute</h1>
+  <p class="lede">Transcript, summary and chapters, made on this computer. The file is never uploaded anywhere.</p>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept="audio/*,video/*" hidden>
+    <strong>Drop a podcast here</strong>, or click to choose. MP3, M4A, WAV or video.
+  </label>
+  <div class="bar" hidden id="bar"><i></i></div>
+  <audio id="player" controls hidden></audio>
+
+  <div class="stats" id="stats" hidden>
+    <div class="stat card"><span>Episode</span><b id="s-audio">·</b></div>
+    <div class="stat card"><span>Transcribed in</span><b id="s-asr">·</b></div>
+    <div class="stat card"><span>Summary ready</span><b id="s-sum">·</b></div>
+    <div class="stat card"><span>Total</span><b id="s-total">·</b></div>
+  </div>
+
+  <div class="cols" id="cols" hidden>
+    <section class="pane card">
+      <p class="label">Summary</p>
+      <div class="summary">
+        <div id="summary"><p class="hint">Chapters appear while the episode is being transcribed.</p></div>
+        <h3 id="ch-head" hidden>Chapters</h3>
+        <ul id="chapters"></ul>
+        <div id="quote"></div>
+      </div>
+    </section>
+    <section class="pane card">
+      <p class="label" id="t-label">Transcript</p>
+      <div class="transcript" id="transcript"></div>
+    </section>
+  </div>
+  <p class="hint" id="footnote"></p>
+</div>
+
+<script type="module">
+import { watchNetwork } from '/static/net.js'
+
+const $ = (id) => document.getElementById(id)
+watchNetwork($('net'))
+
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+const clock = (sec) => {
+  sec = Math.max(0, Math.round(sec))
+  const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0')
+}
+const secs = (s) => s < 10 ? s.toFixed(1) + ' s' : Math.round(s) + ' s'
+const toSeconds = (mmss) => {
+  const p = mmss.split(':').map(Number)
+  return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1]
+}
+// The summary model writes [mm:ss]. Past an hour mm keeps counting, 75:10.
+const stampButton = (t) => `<button class="ts" data-t="${toSeconds(t)}">${t}</button>`
+
+// A small renderer for the one format the prompt asks for. The model writes
+// it token by token, so this runs on every update and must tolerate half lines.
+function render(md) {
+  const out = []
+  let list = false
+  for (const raw of md.split('\n')) {
+    const line = raw.trimEnd()
+    const inline = (s) => esc(s).replace(/\[(\d{1,3}:\d{2}(?::\d{2})?)\]/g, (_, t) => stampButton(t))
+      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    if (/^[-*] /.test(line)) {
+      if (!list) { out.push('<ul>'); list = true }
+      out.push('<li>' + inline(line.slice(2)) + '</li>')
+      continue
+    }
+    if (list) { out.push('</ul>'); list = false }
+    if (!line) continue
+    if (line.startsWith('## ')) out.push('<h3>' + inline(line.slice(3)) + '</h3>')
+    else if (line.startsWith('# ')) out.push('<h2>' + inline(line.slice(2)) + '</h2>')
+    else if (line.startsWith('> ')) out.push('<blockquote>' + inline(line.slice(2)) + '</blockquote>')
+    else out.push('<p>' + inline(line) + '</p>')
+  }
+  if (list) out.push('</ul>')
+  return out.join('')
+}
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('.ts')
+  if (!b) return
+  const p = $('player')
+  p.currentTime = Number(b.dataset.t)
+  p.play()
+})
+
+const drop = $('drop')
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over') })
+drop.addEventListener('dragleave', () => drop.classList.remove('over'))
+drop.addEventListener('drop', (e) => {
+  e.preventDefault(); drop.classList.remove('over')
+  if (e.dataTransfer.files[0]) run(e.dataTransfer.files[0])
+})
+$('file').addEventListener('change', (e) => e.target.files[0] && run(e.target.files[0]))
+
+let running = false
+async function run(file) {
+  if (running) return
+  running = true
+  drop.hidden = true
+  $('player').src = URL.createObjectURL(file)
+  $('player').hidden = false
+  $('bar').hidden = false
+  $('stats').hidden = false
+  $('cols').hidden = false
+  $('transcript').innerHTML = ''
+  $('summary').innerHTML = '<p class="hint">Chapters appear while the episode is being transcribed.</p>'
+  $('chapters').innerHTML = ''
+  $('quote').innerHTML = ''
+  $('ch-head').hidden = true
+  const chapterList = []
+  $('t-label').textContent = 'Transcript'
+  ;['s-asr', 's-sum', 's-total'].forEach((id) => { $(id).textContent = '·' })
+  $('s-audio').textContent = '…'
+
+  const t0 = performance.now()
+  const tick = setInterval(() => { $('s-total').textContent = secs((performance.now() - t0) / 1000) }, 100)
+  let asrStart = null, sumStart = null, summaryText = ''
+  const asrTick = setInterval(() => {
+    if (asrStart && $('s-asr').dataset.done !== '1') $('s-asr').textContent = secs((performance.now() - asrStart) / 1000)
+    if (sumStart && $('s-sum').dataset.done !== '1') $('s-sum').textContent = '+' + secs((performance.now() - sumStart) / 1000)
+  }, 100)
+  $('s-asr').dataset.done = $('s-sum').dataset.done = ''
+
+  const body = new FormData()
+  body.append('file', file)
+  try {
+    const res = await fetch('/api/podcast', { method: 'POST', body })
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
+    let buf = ''
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += value
+      let nl
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const ev = JSON.parse(buf.slice(0, nl))
+        buf = buf.slice(nl + 1)
+        handle(ev)
+      }
+    }
+  } catch (err) {
+    $('footnote').textContent = 'Something went wrong: ' + err.message
+  } finally {
+    clearInterval(tick); clearInterval(asrTick)
+    $('s-total').textContent = secs((performance.now() - t0) / 1000)
+    running = false
+  }
+
+  function handle(ev) {
+    if (ev.type === 'start') {
+      $('s-audio').textContent = clock(ev.audioSeconds)
+      asrStart = performance.now()
+    } else if (ev.type === 'piece' && ev.text) {
+      const p = document.createElement('p')
+      p.innerHTML = stampButton(clock(ev.start)) + esc(ev.text)
+      $('transcript').append(p)
+    } else if (ev.type === 'progress') {
+      $('bar').firstElementChild.style.width = (100 * ev.done / ev.total) + '%'
+    } else if (ev.type === 'transcribed') {
+      $('s-asr').dataset.done = '1'
+      $('s-asr').textContent = secs(ev.seconds)
+      $('t-label').textContent = `Transcript, ${ev.words.toLocaleString('en')} words`
+      sumStart = performance.now()
+    } else if (ev.type === 'chapter' && ev.title) {
+      chapterList.push(ev)
+      chapterList.sort((a, b) => a.start - b.start)
+      $('ch-head').hidden = false
+      $('chapters').innerHTML = chapterList.map((c) =>
+        `<li>${stampButton(clock(c.start))}<b>${esc(c.title)}</b>. ${esc(c.gist)}</li>`).join('')
+    } else if (ev.type === 'summary-start') {
+      $('summary').innerHTML = '<span class="caret"></span>'
+    } else if (ev.type === 'summary') {
+      summaryText += ev.text
+      $('summary').innerHTML = render(summaryText) + '<span class="caret"></span>'
+    } else if (ev.type === 'done') {
+      $('s-sum').dataset.done = '1'
+      if (ev.summary) {
+        $('s-sum').textContent = '+' + secs(ev.summarySeconds)
+        $('summary').innerHTML = render(summaryText)
+        if (ev.quote) {
+          $('quote').innerHTML = '<h3>Quote</h3><blockquote>' + stampButton(clock(ev.quote.start)) +
+            esc(ev.quote.text) + '</blockquote>'
+        }
+      } else {
+        $('s-sum').textContent = 'off'
+        $('summary').innerHTML = '<p class="hint">' + esc(ev.reason || 'No summary') + '</p>'
+      }
+      $('bar').hidden = true
+    } else if (ev.type === 'error') {
+      $('footnote').textContent = ev.message
+    }
+  }
+}
+</script>
+</body>
+</html>
