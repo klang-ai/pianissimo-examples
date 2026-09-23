@@ -1,0 +1,15 @@
+1
+00:00:00,080 --> 00:00:02,960
+1. Stockholm är Sveriges huvudstad.
+
+2
+00:00:03,280 --> 00:00:06,000
+2. Göteborg ligger på västkusten.
+
+3
+00:00:06,400 --> 00:00:08,720
+3. Malmö ligger i Skåne.
+
+4
+00:00:08,960 --> 00:00:11,680
+4. Uppsala har ett gammalt universitet.

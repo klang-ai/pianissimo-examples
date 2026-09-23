@@ -1,14 +1,22 @@
-# Pianissimo realtime examples
+# Pianissimo examples
 
 Runnable examples for [Klang Pianissimo](https://huggingface.co/KlangAI/pianissimo-sv), an open
-Swedish speech-to-text model, streaming through [Berget AI](https://berget.ai).
+Swedish speech-to-text model made by [Klang](https://klang.ai/pianissimo/?utm_source=github&utm_medium=referral&utm_campaign=pianissimo-subtitles&utm_content=readme).
 
-Two examples, same endpoint:
+**Do a job with it:**
 
-- `cli/` streams a WAV file and prints text as it arrives. No browser, no build step.
+[![A 1937 Swedish newsreel with subtitles generated on a laptop](examples/subtitles/sattmaskinen.gif)](examples/subtitles/)
+
+- [`examples/subtitles/`](examples/subtitles/) subtitles a Swedish video on your own machine.
+  No key, no account, no upload. A fourteen minute film in 17 seconds on a laptop CPU.
+
+**Call the model directly:**
+
+- `cli/` streams a WAV file to [Berget AI](https://berget.ai) and prints text as it arrives.
 - `browser/` streams your microphone. Needs the relay in `relay/`, for the reason below.
+- `python/` runs the weights locally, no API key.
 
-Everything here is verified against the live endpoint, not written from the spec.
+Everything here was run before it was written down, not written from the spec.
 
 ## Requirements
 
@@ -179,7 +187,9 @@ The clip is 12.2 s, shorter than the 28 s default, so run A is never segmented b
 its turn closes on commit. Run B segments every 3 s and loses the opening word.
 
 The same weights run locally keep the word, so this sits in the streaming path rather than in the
-model. `repro/make-audio.sh` regenerates the clip with macOS text to speech if you want your own.
+model. Berget reported a fix on 23 September 2026 that keeps the opening word at 3 s and 1 s
+chunks, with a release planned the same day. Run the script to see what you get; the output
+above is from before the fix. `repro/make-audio.sh` regenerates the clip with macOS text to speech if you want your own.
 
 ## License
 
