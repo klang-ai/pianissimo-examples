@@ -67,8 +67,8 @@ skeppet. Allt går svindlande fort,
 men ibland blir det stopp.
 ```
 
-`sample.srt` in this directory is the real output for `repro/counting-sv.wav`, which ships
-with the repo, so you can regenerate a result without a file of your own.
+`sample.srt` in this directory is the real output for `examples/berget-realtime/repro/counting-sv.wav`,
+which ships with the repo, so you can regenerate a result without a file of your own.
 
 ## How the cues are built
 

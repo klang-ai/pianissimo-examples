@@ -9,7 +9,7 @@
 // It forwards frames verbatim in both directions: the browser code is the same
 // code you would write against Berget, minus the credential.
 //
-//   BERGET_API_KEY=... node relay/server.mjs
+//   BERGET_API_KEY=... node examples/berget-realtime/relay/server.mjs
 //   open http://localhost:8787
 
 import http from 'node:http'

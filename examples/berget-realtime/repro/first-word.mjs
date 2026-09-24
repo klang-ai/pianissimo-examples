@@ -5,7 +5,7 @@
 // chunk_seconds. Everything else, the audio, the pacing, the rate, the model,
 // is identical.
 //
-//   BERGET_API_KEY=sk_ber_... node repro/first-word.mjs repro/counting-sv.wav
+//   BERGET_API_KEY=sk_ber_... node examples/berget-realtime/repro/first-word.mjs examples/berget-realtime/repro/counting-sv.wav
 //
 // Expected: run A keeps the opening word, run B drops it.
 

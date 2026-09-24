@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Runnable examples for Klang Pianissimo realtime transcription on Berget AI",
+  "description": "Runnable examples for Klang Pianissimo, local and hosted",
   "scripts": {
-    "transcribe": "node cli/transcribe-file.mjs",
-    "relay": "node relay/server.mjs"
+    "transcribe": "node examples/berget-realtime/cli/transcribe-file.mjs",
+    "relay": "node examples/berget-realtime/relay/server.mjs"
   },
   "engines": {
     "node": ">=20"
