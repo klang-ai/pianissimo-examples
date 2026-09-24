@@ -7,20 +7,21 @@ the review can start where it matters.
 
 ## Map
 
-About 2,800 lines, no dependencies beyond NeMo, aiohttp and soundfile in Python,
+About 3,000 lines, no dependencies beyond NeMo, aiohttp and soundfile in Python,
 and none in the browser.
 
 | File | Lines | Job |
 |---|---:|---|
-| `server.py` | 588 | aiohttp app: every route, the podcast job, dictation over a WebSocket, the Origin check |
+| `server.py` | 595 | aiohttp app: every route, the podcast job, dictation over a WebSocket, the Origin check |
 | `asr.py` | 142 | Loads Pianissimo once. `transcribe()` for batches, `words()` for word timings, `pieces()` cuts audio into 30 s |
 | `summary.py` | 207 | Starts `llama-server`, and every prompt: chapter, summary, compare. Also the online check |
-| `fetch.py` | 356 | Turns a link or a name into an episode's audio URL, and downloads it |
-| `clip.py` | 229 | Finds a quote, times its words, renders a 9:16 video with ffmpeg-full |
+| `fetch.py` | 370 | Turns a link or a name into an episode's audio URL, and downloads it |
+| `clip.py` | 234 | Finds a quote, times its words, renders a 9:16 video with ffmpeg-full |
 | `ask.py` | 67 | BM25 over the 30 s pieces, and the answer prompt |
-| `archive.py` | 143 | Background queue, JSON on disk, search across episodes |
+| `archive.py` | 149 | Background queue, JSON on disk, search across episodes |
 | `static/*.html` | ~830 | One page per app, plain ES modules, no build step |
 | `static/style.css` | 204 | Shared tokens and components. System fonts only, so it renders offline |
+| `test_offline.py` | ~150 | Stdlib unittest for everything that needs no model, network or ffmpeg |
 
 ## Routes
 
@@ -70,10 +71,13 @@ These were chosen on purpose. Each one is the thing to challenge if it looks wro
 - **A quote is kept only if it appears in the transcript**, compared after
   lowercasing and stripping punctuation (`summary._normal`). The small model
   paraphrases and calls it a quote often enough that this matters.
-- **Spotify is never asked for audio.** A Spotify link is resolved to show and
-  title, then to the show's public RSS feed through Apple's directory, and the
-  episode is matched by title with length as a tiebreak (`fetch.match_in_feed`,
-  threshold 0.6 word overlap).
+- **Spotify and yt-dlp are behind `--any-link`** (`fetch.ANY_LINK`). Spotify's page
+  is scraped for show and title, and YouTube downloads are against its terms, so both
+  are off unless the person running the server turns them on. With the flag, a
+  Spotify link is resolved to show and title, then to the show's public RSS feed
+  through Apple's directory, and the episode is matched by title with length as a
+  tiebreak (`fetch.match_in_feed`, threshold 0.6 word overlap). Spotify is never
+  asked for audio.
 - **Sveriges Radio goes through its open API** because its pages answer 403 to
   both plain requests and yt-dlp from this machine.
 - **ffmpeg runs without `DYLD_LIBRARY_PATH`** (`clip._env`). The NeMo import sets it
@@ -92,10 +96,10 @@ These were chosen on purpose. Each one is the thing to challenge if it looks wro
 
 Not fixed, and known. Listed so a review does not have to rediscover them.
 
-1. **No tests.** Everything was verified by running it against real episodes, in
-   the browser and through the API, but none of it is checked in as a test. The
-   pure parts are easy to test: `fetch.similarity`, `fetch.seconds`, `ask.search`,
-   `clip.span`, `clip.cues`, `summary._normal`.
+1. **Tests cover only the pure parts.** `test_offline.py` checks `fetch`, `ask`,
+   `summary` and `clip` where no model, network or ffmpeg is needed. The routes, the
+   dictation state machine, the archive worker and everything that touches a model
+   are still verified only by running them against real episodes.
 2. **Nothing is ever cleaned up while the server runs.** Jobs stay in memory and
    downloads in the media dir until shutdown. An evening of long episodes is
    gigabytes.
@@ -108,12 +112,14 @@ Not fixed, and known. Listed so a review does not have to rediscover them.
    stretch is transcribed a second time to get word timings, and the second pass
    can hear a word differently. `clip.span` tolerates the drift by scoring how many
    words line up rather than demanding all of them.
-6. **YouTube through yt-dlp** is against YouTube's terms of service. It is fine for
-   a demo on one's own machine and should not be shipped as a hosted feature.
+6. **YouTube through yt-dlp and Spotify's page** are off by default and behind
+   `--any-link`. With the flag they are fine on one's own machine and still wrong for
+   a hosted feature.
 7. **An orphaned `llama-server`.** It is started detached. If the Python server is
    killed hard, it keeps running on port 8099, and the next start reuses it.
 8. **The archive has no cancel and no retry.** A failed episode is marked and left;
-   adding it again requeues it.
+   adding it again requeues it. A yt-dlp download has a socket timeout of 30 s and a
+   final wait of 120 s; a plain download has a 60 s timeout per read.
 9. **Answers can attribute.** The prompts say never to guess who is speaking, but a
    name spoken in the transcript can end up attached to the wrong claim.
 10. **Audio playback in the page was not seen working** in the automated Chrome
@@ -122,12 +128,19 @@ Not fixed, and known. Listed so a review does not have to rediscover them.
 
 ## How to verify each part
 
+Without the server, from the repo root:
+
+```bash
+python3 examples/offline/test_offline.py
+```
+
 With the server running (`.venv/bin/python examples/offline/server.py`):
 
 ```bash
-# Resolve: expect one item, "Spotify, then the show's public RSS feed", 1317 s
+# Resolve: expect 404 and a message naming --any-link
 curl -s -X POST localhost:8765/api/resolve -H 'Content-Type: application/json' \
   -d '{"q":"https://open.spotify.com/episode/7t5EYXfU6usMYduhVBS9nQ"}'
+# Started with --any-link: expect one item, "Spotify, then the show's public RSS feed", 1317 s
 
 # Origin check: expect 403, then 200
 curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8765/api/resolve \
@@ -135,6 +148,6 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8765/api/resolve \
 curl -s -o /dev/null -w '%{http_code}\n' localhost:8765/api/status
 ```
 
-The rest is quickest in the browser: `/podcast` with the Spotify link above, then
+The rest is quickest in the browser: `/podcast` with `sommar i p1` in the box, then
 ask it something it does not cover (expect "Det sägs inte i avsnittet"), then select
 a sentence in the transcript and clip it.

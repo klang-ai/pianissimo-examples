@@ -72,17 +72,24 @@ class Archive:
         return added
 
     def _kick(self):
-        if self.worker and self.worker.is_alive():
-            return
-        if not any(e["status"] == "queued" for e in self.episodes.values()):
-            return
-        self.worker = threading.Thread(target=self._run, daemon=True)
-        self.worker.start()
+        with self.lock:
+            if self.worker and self.worker.is_alive():
+                return
+            if not any(e["status"] == "queued" for e in self.episodes.values()):
+                return
+            self.worker = threading.Thread(target=self._run, daemon=True)
+            self.worker.start()
 
     def _next(self):
+        """Claim the oldest queued episode, under the lock, so two workers that
+        happen to overlap can never take the same one."""
         with self.lock:
             queued = [e for e in self.episodes.values() if e["status"] == "queued"]
-            return min(queued, key=lambda e: e["added"]) if queued else None
+            if not queued:
+                return None
+            ep = min(queued, key=lambda e: e["added"])
+            ep["status"], ep["progress"] = "downloading", 0.0
+            return ep
 
     def _run(self):
         while ep := self._next():
@@ -95,7 +102,6 @@ class Archive:
     def _process(self, ep):
         folder = os.path.join(ROOT, "media", ep["id"])
         os.makedirs(folder, exist_ok=True)
-        ep["status"], ep["progress"] = "downloading", 0.0
         t0 = time.monotonic()
 
         def progress(done, total):

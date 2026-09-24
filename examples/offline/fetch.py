@@ -31,6 +31,12 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
 ITUNES = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
 AUDIO_EXT = (".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".mp4", ".webm")
 MAX_LIST = 8
+# Spotify's page and yt-dlp (YouTube and others) are read only when the server
+# runs with --any-link. Both are fine for trying things on your own machine and
+# wrong for a hosted service: Spotify's page is scraped, and downloading from
+# YouTube is against its terms. Apple's directory, RSS, Sveriges Radio's API
+# and plain pages with a player are always on.
+ANY_LINK = False
 # How many episodes a show or search returns. The podcast page wants a short
 # list to pick from; the archive wants the whole back catalogue. Per thread,
 # because each request is resolved on its own worker thread.
@@ -58,7 +64,9 @@ def get_json(url):
 
 
 def normal(s):
-    s = unicodedata.normalize("NFKD", html.unescape(s or "")).lower()
+    # NFKC, not NFKD: decomposed, "ö" becomes "o" plus a combining mark, the mark
+    # is not \w, and every Swedish word with åäö splits in two.
+    s = unicodedata.normalize("NFKC", html.unescape(s or "")).lower()
     return " ".join(re.sub(r"[^\w\s]", " ", s).split())
 
 
@@ -219,7 +227,7 @@ def from_sr(url):
 
 
 def from_ytdlp(url):
-    if not shutil.which("yt-dlp"):
+    if not ANY_LINK or not shutil.which("yt-dlp"):
         return None
     run = subprocess.run(["yt-dlp", "-J", "--flat-playlist", "--no-warnings", url],
                          capture_output=True, text=True, timeout=60)
@@ -287,6 +295,9 @@ def resolve(text, limit=MAX_LIST):
             return search(text)
     host = urllib.parse.urlparse(text).netloc.lower()
     if "spotify.com" in host:
+        if not ANY_LINK:
+            raise NotFound("Spotify links are off unless the server runs with --any-link. "
+                           "Paste the show's Apple Podcasts link or RSS feed instead.")
         return from_spotify(text)
     if "podcasts.apple.com" in host:
         return from_apple(text)
@@ -304,7 +315,8 @@ def resolve(text, limit=MAX_LIST):
         hit = from_ytdlp(text)
         if hit:
             return hit
-        raise NotFound(f"The page answered {e.code}, and yt-dlp could not read it either.")
+        raise NotFound(f"The page answered {e.code}." + (
+            "" if ANY_LINK else " Some sites open only through yt-dlp: start with --any-link."))
     if ctype.startswith(("audio/", "video/")):
         return [episode(os.path.basename(urllib.parse.urlparse(final).path), final, via="a direct link")]
     head = body[:400].decode("utf-8", "replace").lstrip()
@@ -329,6 +341,7 @@ def download(item, dest_dir, progress):
         out = os.path.join(dest_dir, "episode.%(ext)s")
         proc = subprocess.Popen(
             ["yt-dlp", "-f", "bestaudio/best", "--no-playlist", "--newline", "--no-warnings",
+             "--socket-timeout", "30",
              "--progress-template", "download:%(progress.downloaded_bytes)s %(progress.total_bytes_estimate)s",
              "-o", out, item["audio"]],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -337,7 +350,10 @@ def download(item, dest_dir, progress):
             if len(parts) == 2 and parts[0].isdigit():
                 total = float(parts[1]) if parts[1] not in ("NA", "None") else 0
                 progress(int(parts[0]), int(total))
-        if proc.wait() != 0:
+        # stdout is closed by now, so this only guards against a process that
+        # stays up after its last line and would otherwise hold the archive
+        # worker forever.
+        if proc.wait(timeout=120) != 0:
             raise NotFound("yt-dlp could not download the audio.")
         files = [f for f in os.listdir(dest_dir) if f.startswith("episode.")]
         if not files:

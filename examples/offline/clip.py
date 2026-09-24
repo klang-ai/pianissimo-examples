@@ -67,10 +67,15 @@ def locate(job, text=None, start=None):
     if text:
         want = " ".join(_tokens(text))
         head = " ".join(_tokens(text)[:6])
-        for i, (s, t) in enumerate(pieces):
-            window = " ".join(_tokens(t + " " + (pieces[i + 1][1] if i + 1 < len(pieces) else "")))
-            if want in window or head in window:
-                return s, min(s + 60.0, job["seconds"])
+        windows = [(s, " ".join(_tokens(t + " " + (pieces[i + 1][1] if i + 1 < len(pieces) else ""))))
+                   for i, (s, t) in enumerate(pieces)]
+        # The whole quote over every piece first, its opening words only as a
+        # fallback. Checked together, a quote whose first words also occur
+        # earlier in the episode lands on the earlier place.
+        for needle in (want, head):
+            for s, window in windows:
+                if needle and needle in window:
+                    return s, min(s + 60.0, job["seconds"])
         raise LookupError("That text is not in the transcript.")
     start = max(0.0, float(start or 0))
     return start, min(start + 30.0, job["seconds"])

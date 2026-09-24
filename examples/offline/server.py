@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Two offline Pianissimo apps on one local server.
+"""Four offline Pianissimo apps on one local server.
 
     .venv/bin/python examples/offline/server.py
 
 Then open http://127.0.0.1:8765 and pick one:
 
-  /podcast    Drop in a podcast, get the transcript, a summary and chapters.
-  /dictation  Talk, and the text appears as you speak.
+  /podcast    Transcript, summary and chapters for an episode. Then clip it or ask it.
+  /dictation  Swedish speech to text as you speak.
+  /archive    A whole show transcribed in the background, searchable.
+  /compare    Two episodes: agree, differ, only in one.
 
 Everything runs on this machine. The speech model, the summary model and the
 server all bind to 127.0.0.1 and read their weights from the local cache, so
@@ -36,6 +38,9 @@ ap.add_argument("--online", action="store_true",
                 help="allow Hugging Face downloads, for the first run only")
 ap.add_argument("--no-summary", action="store_true",
                 help="skip the summary model and only transcribe")
+ap.add_argument("--any-link", action="store_true",
+                help="also resolve Spotify links and, through yt-dlp, YouTube and similar "
+                     "sites. Off by default; see README")
 ap.add_argument("--verbose", action="store_true")
 args = ap.parse_args()
 
@@ -144,6 +149,7 @@ def podcast_job(app, path, emit, meta=None, summarise=True):
           "audioSeconds": seconds})
 
     if not use_summary:
+        pool.shutdown()
         emit({"type": "done", "summary": False,
               "reason": "summary skipped" if not summarise else
               (summarizer.problem or "summary model did not start")
@@ -541,6 +547,7 @@ def main():
     asr.warm_up(engine)
     print(f"ready on {engine.device}, loaded in {engine.load_seconds:.1f} s", file=sys.stderr)
 
+    fetch.ANY_LINK = args.any_link
     summarizer = None if args.no_summary else summary.Summarizer()
     if summarizer:
         if summarizer.problem:
