@@ -48,6 +48,14 @@
         <ul id="chapters"></ul>
         <div id="quote"></div>
       </div>
+      <form class="ask" id="ask" hidden>
+        <p class="label">Ask the episode</p>
+        <div class="find">
+          <input id="question" type="text" autocomplete="off" placeholder="Vad sa de om…">
+          <button class="primary" type="submit">Ask</button>
+        </div>
+        <div id="answers"></div>
+      </form>
     </section>
     <section class="pane card">
       <p class="label" id="t-label">Transcript</p>
@@ -202,6 +210,41 @@ $('clip-float').addEventListener('click', () => {
   getSelection().removeAllRanges()
 })
 
+$('ask').addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const question = $('question').value.trim()
+  if (!question || !jobId) return
+  $('question').value = ''
+  const box = document.createElement('div')
+  box.className = 'answer'
+  box.innerHTML = `<p class="q">${esc(question)}</p><p class="a"><span class="caret"></span></p>`
+  $('answers').prepend(box)
+  let text = '', starts = []
+  const res = await fetch('/api/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ job: jobId, question }) })
+  if (!res.ok) { box.querySelector('.a').textContent = (await res.json()).error; return }
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
+  let buf = ''
+  const draw = (done) => {
+    box.querySelector('.a').innerHTML = render(text).replace(/^<p>|<\/p>$/g, '') + (done ? '' : '<span class="caret"></span>')
+    if (done && starts.length) {
+      box.insertAdjacentHTML('beforeend', '<p class="hint">From ' + starts.map((s) => stampButton(clock(s))).join('') + '</p>')
+    }
+  }
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buf += value
+    let nl
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const ev = JSON.parse(buf.slice(0, nl)); buf = buf.slice(nl + 1)
+      if (ev.type === 'sources') starts = ev.starts
+      if (ev.type === 'answer') { text += ev.text; draw(false) }
+      if (ev.type === 'error') text = ev.message
+    }
+  }
+  draw(true)
+})
+
 let running = false
 async function run(source) {
   const file = source.file
@@ -289,6 +332,7 @@ async function run(source) {
     } else if (ev.type === 'progress') {
       $('bar').firstElementChild.style.width = (100 * ev.done / ev.total) + '%'
     } else if (ev.type === 'transcribed') {
+      $('ask').hidden = false
       $('s-asr').dataset.done = '1'
       $('s-asr').textContent = secs(ev.seconds)
       $('t-label').textContent = `Transcript, ${ev.words.toLocaleString('en')} words`

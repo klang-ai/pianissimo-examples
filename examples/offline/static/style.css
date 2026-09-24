@@ -154,3 +154,12 @@ audio { width: 100%; margin-top: 16px; }
 .clip-card a { color: var(--accent); }
 .clip-btn { margin-top: 12px; }
 .clip-float { position: absolute; z-index: 10; padding: 7px 14px; font-size: 14px; box-shadow: var(--shadow); }
+
+/* ---- ask ---- */
+.ask { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--rule); }
+.ask .find { margin-top: 0; }
+.ask .find input { font-size: 15px; padding: 9px 16px; box-shadow: none; }
+.answer { margin-top: 14px; }
+.answer .q { font-weight: 600; margin: 0 0 4px; }
+.answer .a { margin: 0; }
+.answer .hint { margin: 6px 0 0; }

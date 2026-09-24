@@ -135,7 +135,11 @@ class Summarizer:
     def stream(self, chapters):
         """Yield the episode summary a few characters at a time."""
         outline = "\n".join(f"[{stamp(c['start'])}] {c['title']}: {c['gist']}" for c in chapters)
-        with urllib.request.urlopen(self._request(SUMMARY_PROMPT, outline, 450, True),
+        yield from self.stream_text(SUMMARY_PROMPT, outline, 450)
+
+    def stream_text(self, system, user, max_tokens):
+        """Yield any answer from the local model as it is written."""
+        with urllib.request.urlopen(self._request(system, user, max_tokens, True),
                                     timeout=300) as r:
             for raw in r:
                 line = raw.decode("utf-8").strip()

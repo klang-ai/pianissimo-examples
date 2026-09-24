@@ -45,6 +45,7 @@ if args.online:
 import numpy as np  # noqa: E402
 from aiohttp import WSMsgType, web  # noqa: E402
 
+import ask  # noqa: E402
 import asr  # noqa: E402
 import clip  # noqa: E402
 import fetch  # noqa: E402
@@ -279,6 +280,33 @@ async def make_clip(request):
     return web.json_response(out)
 
 
+async def ask_episode(request):
+    """Answer a question from the parts of the transcript that are about it."""
+    body = await request.json()
+    job = request.app["jobs"].get(body.get("job"))
+    question = (body.get("question") or "").strip()
+    summarizer = request.app["summarizer"]
+    if not job or not question:
+        return web.json_response({"error": "Need an episode and a question."}, status=400)
+    if not summarizer or summarizer.problem:
+        return web.json_response({"error": "The local language model is not available."}, status=503)
+
+    def run(emit):
+        t0 = time.monotonic()
+        hits = ask.search(job["pieces"], question)
+        emit({"type": "sources", "starts": [job["pieces"][i][0] for i in hits]})
+        if not hits:
+            emit({"type": "answer", "text": "Det sägs inte i avsnittet."})
+        else:
+            for delta in summarizer.stream_text(
+                    ask.PROMPT, f"Fråga: {question}\n\nUtdrag:\n\n" +
+                    ask.excerpt(job["pieces"], hits, summary.stamp), 300):
+                emit({"type": "answer", "text": delta})
+        emit({"type": "done", "seconds": time.monotonic() - t0})
+
+    return await stream_events(request, run)
+
+
 # ---- dictation ---------------------------------------------------------------
 
 # Re-transcribe the open segment each time this much new audio has arrived.
@@ -446,6 +474,7 @@ def main():
     app.router.add_post("/api/resolve", resolve)
     app.router.add_post("/api/podcast-url", podcast_url)
     app.router.add_post("/api/clip", make_clip)
+    app.router.add_post("/api/ask", ask_episode)
     app.router.add_get("/ws/dictate", dictate)
     app.router.add_get("/media/{path:.+}", media)
     app.router.add_static("/static", os.path.join(HERE, "static"))
