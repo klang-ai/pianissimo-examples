@@ -1,7 +1,10 @@
-# Pianissimo, hosted: the realtime endpoint on Berget
+# Stream audio to the hosted endpoint
 
-Stream audio to `klang/pianissimo` on [Berget AI](https://berget.ai) and get text back while
-it plays. Three small programs and one reproduction:
+Text back while the audio is still playing. This is the example to start from if you would
+rather call an endpoint than install PyTorch, or if you need live text at all. Runs hosted:
+`klang/pianissimo` on [Berget AI](https://berget.ai)'s realtime endpoint, over a WebSocket.
+
+Three small programs and one reproduction:
 
 | | |
 |---|---|
@@ -55,20 +58,20 @@ open http://localhost:8787
 
 Press Start, speak Swedish, press Stop.
 
-## Notes on the realtime API
+## What we ran into
 
-Things we ran into while building these. Each one cost an hour or so to find.
+Written down so you do not have to find them again.
 
 ### The browser cannot connect directly
 
 Berget authenticates with an `Authorization` header, and browsers cannot set headers on a
 WebSocket. Query string and subprotocol auth both return 401, including OpenAI's
-`openai-insecure-api-key.<key>` convention; six variants were tried.
+`openai-insecure-api-key.<key>` convention; we tried six variants.
 
-A web client therefore needs a server that holds the key. `relay/server.mjs` forwards frames
-verbatim in both directions, so the browser code is what you would write against Berget, minus
-the credential. Forward frames as text: the `ws` library sends a Buffer as a binary frame, and
-the endpoint does not answer those.
+So a web client needs a server that holds the key. `relay/server.mjs` forwards frames
+verbatim in both directions, which means the browser code is what you would write against
+Berget, minus the credential. Forward frames as text: the `ws` library sends a Buffer as a
+binary frame, and the endpoint does not answer those.
 
 ### `chunk_seconds` controls whether text streams
 
@@ -153,3 +156,7 @@ weights run locally keep the word, so the loss is in the streaming path, not in 
 Berget reported a fix on 23 September 2026 that keeps the opening word at 3 s and 1 s chunks,
 with a release planned the same day. The output above is from before the fix.
 `repro/make-audio.sh` regenerates the clip with macOS text to speech.
+
+---
+
+Part of [pianissimo-examples](../../). Pianissimo is made by [Klang](https://klang.ai/pianissimo/?utm_source=github&utm_medium=referral&utm_campaign=pianissimo-subtitles&utm_content=readme-berget-realtime).

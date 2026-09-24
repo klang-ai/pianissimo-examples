@@ -5,9 +5,9 @@
 *Varje dag en världsrevy (AB Svensk Filmindustri, 1937), public domain via Wikimedia Commons,
 cut to the parts with speech. Subtitled by Pianissimo on a laptop CPU, network off.*
 
-Audio or video in, a broadcast-shaped `.srt` out, on your own machine. No API key, no
-account, no upload: the weights are downloaded from Hugging Face once, and everything after
-that is local.
+The first thing we built on the model. Audio or video in, a broadcast-shaped `.srt` out.
+Runs locally: no API key, no account, no upload. The weights come from Hugging Face once, and
+everything after that stays on your machine.
 
 The full fourteen minute film took 17 seconds on a MacBook CPU, 50 times faster than real
 time.
@@ -101,4 +101,4 @@ times are never moved, so a subtitle never appears before the word is spoken.
 
 ---
 
-Pianissimo is made by [Klang](https://klang.ai/?utm_source=github&utm_medium=referral&utm_campaign=pianissimo-subtitles&utm_content=readme-subtitles).
+Part of [pianissimo-examples](../../). Pianissimo is made by [Klang](https://klang.ai/pianissimo/?utm_source=github&utm_medium=referral&utm_campaign=pianissimo-subtitles&utm_content=readme-subtitles).
