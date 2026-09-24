@@ -37,6 +37,8 @@ MAX_LIST = 8
 # YouTube is against its terms. Apple's directory, RSS, Sveriges Radio's API
 # and plain pages with a player are always on.
 ANY_LINK = False
+# Upper bound for one yt-dlp download, start to finish.
+YTDLP_DEADLINE = 30 * 60
 # How many episodes a show or search returns. The podcast page wants a short
 # list to pick from; the archive wants the whole back catalogue. Per thread,
 # because each request is resolved on its own worker thread.
@@ -338,6 +340,10 @@ def resolve(text, limit=MAX_LIST):
 def download(item, dest_dir, progress):
     """Fetch the audio to dest_dir and return the path. progress(done, total) as it goes."""
     if item.get("kind") == "ytdlp":
+        # Checked here too: items come from the page, and archive jobs survive
+        # a restart, so the resolve step is not the only way in.
+        if not ANY_LINK:
+            raise NotFound("This episode needs yt-dlp. Start the server with --any-link.")
         out = os.path.join(dest_dir, "episode.%(ext)s")
         proc = subprocess.Popen(
             ["yt-dlp", "-f", "bestaudio/best", "--no-playlist", "--newline", "--no-warnings",
@@ -345,15 +351,23 @@ def download(item, dest_dir, progress):
              "--progress-template", "download:%(progress.downloaded_bytes)s %(progress.total_bytes_estimate)s",
              "-o", out, item["audio"]],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        for line in proc.stdout:
-            parts = line.split()
-            if len(parts) == 2 and parts[0].isdigit():
-                total = float(parts[1]) if parts[1] not in ("NA", "None") else 0
-                progress(int(parts[0]), int(total))
-        # stdout is closed by now, so this only guards against a process that
-        # stays up after its last line and would otherwise hold the archive
-        # worker forever.
-        if proc.wait(timeout=120) != 0:
+        # One deadline for the whole process. A timer kills it, which also ends
+        # the read loop below if yt-dlp stalls without printing anything.
+        timed_out = threading.Event()
+        timer = threading.Timer(YTDLP_DEADLINE, lambda: (timed_out.set(), proc.kill()))
+        timer.start()
+        try:
+            for line in proc.stdout:
+                parts = line.split()
+                if len(parts) == 2 and parts[0].isdigit():
+                    total = float(parts[1]) if parts[1] not in ("NA", "None") else 0
+                    progress(int(parts[0]), int(total))
+            code = proc.wait()
+        finally:
+            timer.cancel()
+        if timed_out.is_set():
+            raise NotFound(f"yt-dlp did not finish within {YTDLP_DEADLINE // 60} minutes.")
+        if code != 0:
             raise NotFound("yt-dlp could not download the audio.")
         files = [f for f in os.listdir(dest_dir) if f.startswith("episode.")]
         if not files:

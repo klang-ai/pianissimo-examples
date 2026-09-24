@@ -2,9 +2,10 @@
 
 The question is matched against the transcript's thirty second pieces, and the
 local model answers from the best few only, citing where in the episode each
-part of the answer comes from. It never sees the whole transcript, which is
-what keeps the answer quick and keeps it honest: if the pieces do not say it,
-it has nothing to make it up from, and the prompt tells it to say so.
+part of the answer comes from. It never sees the whole transcript, which keeps
+the answer quick and narrows what it can draw on. The prompt tells it to say
+when the pieces do not answer the question. It can still get things wrong, so
+the page always lists the pieces it was given.
 """
 
 import math

@@ -1,8 +1,10 @@
-# Podcasts and dictation, with the Wi-Fi off
+# Podcasts and dictation, on your own machine
 
-The biggest example in the repo. We built it to see how far the model goes on long audio and
-a live microphone with no server at all: four small apps on one local web page, all running
-Pianissimo on your own machine. Turn the Wi-Fi off before you start; they work the same.
+Four local apps built on Pianissimo: podcast transcripts and summaries, dictation, a
+searchable podcast archive, and a comparison of two episodes. Pianissimo does the speech to
+text; summaries and answers come from a small language model, Qwen3 4B through llama.cpp.
+Both run on your machine, behind a local web server. Download the models, and any episodes
+you want, before going offline.
 
 Reviewing the code rather than running it? Start with [REVIEW.md](REVIEW.md).
 
@@ -17,19 +19,25 @@ Reviewing the code rather than running it? Start with [REVIEW.md](REVIEW.md).
 - **Compare** (`/compare`). Two episodes on one subject: what they agree on, where they
   differ, and what only one of them brings up.
 
-What leaves the machine: the link or search words you paste, which go to the podcast
-directory and to the site that hosts the audio, and the audio download itself. Nothing you
-record, upload or transcribe is sent anywhere. The browser talks to a server on `127.0.0.1`,
-both models are read from the local cache, and the badge in the corner shows whether the
-machine can reach the internet at all. That check opens a TCP connection to 1.1.1.1 and
-sends no data over it.
+What uses the network:
+
+- the link or search words you paste, sent to Apple's podcast directory or the site that
+  hosts the episode, and the audio download itself;
+- cover images, loaded from the podcast's own servers when a page shows them;
+- the badge in the corner, which every 3 s opens a TCP connection to 1.1.1.1:443, or
+  8.8.8.8:53 if that fails, and sends nothing over it.
+
+What does not: anything you record, upload or transcribe. Transcription, summaries, clips,
+answers and dictation run locally, and the browser only talks to the server on `127.0.0.1`.
 
 ## Setup
 
 Python 3.10 or later, ffmpeg, and llama.cpp for the summary.
 
+Run everything from the repo root.
+
 ```bash
-python -m venv .venv && .venv/bin/pip install "nemo_toolkit[asr]" aiohttp soundfile
+python3 -m venv .venv && .venv/bin/pip install "nemo_toolkit[asr]" aiohttp soundfile
 brew install ffmpeg llama.cpp
 brew install ffmpeg-full   # only for clips: it has libass, which burns captions in
 ```
@@ -37,8 +45,8 @@ brew install ffmpeg-full   # only for clips: it has libass, which burns captions
 Download both models once, with the network on:
 
 ```bash
-hf download KlangAI/pianissimo-sv
-hf download unsloth/Qwen3-4B-Instruct-2507-GGUF Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+.venv/bin/hf download KlangAI/pianissimo-sv
+.venv/bin/hf download unsloth/Qwen3-4B-Instruct-2507-GGUF Qwen3-4B-Instruct-2507-Q4_K_M.gguf
 ```
 
 That is 2.34 GB for Pianissimo and 2.5 GB for the summary model.
@@ -75,8 +83,8 @@ The box on the podcast page takes:
 and downloading from YouTube is against its terms of service, so neither belongs in a hosted
 service.
 
-Fetching the audio is the only thing that uses the network. The page says so when the
-download is done, and the Wi-Fi can go off from there.
+The page says when the download is done. From there the episode can be transcribed,
+summed up, clipped and asked with the Wi-Fi off.
 
 ## How it works
 
@@ -109,7 +117,7 @@ turns into buttons that play that episode from there.
 
 ## What we measured
 
-MacBook Pro with an M5 and 24 GB. A 51 minute episode of Ekots lördagsintervju: transcribed
+Each measured once, on a MacBook Pro with an M5 and 24 GB. A 51 minute episode of Ekots lördagsintervju: transcribed
 in 55 s with the summary model running alongside, summary ready 11 s later, 69 s from
 dropping the file to done. Transcription alone runs at about 105 times real time on the M5's
 GPU.
@@ -126,10 +134,11 @@ minutes compared in about 100 s.
   spoken.
 - The chapters are cut by time, a few minutes each, not by topic.
 - Dictation re-reads the open sentence as you speak, so the last few words can change until
-  you pause.
+  you pause. Stop waits up to 30 s for the last words; if the model is busy longer than that,
+  the text already on screen is kept.
 - The small model is weakest at disagreement. Under "Oense" it sometimes lists something only
-  one episode says, which belongs under "Bara i". A larger model in `summary.py` fixes that
-  and costs speed.
+  one episode says, which belongs under "Bara i". A larger model in `summary.py` may do better
+  at the cost of speed; we have not tested one.
 - A Spotify exclusive has no public feed and cannot be fetched.
 - An archive job and a podcast job share one model, so a full queue slows the podcast page
   down until the queue is done.

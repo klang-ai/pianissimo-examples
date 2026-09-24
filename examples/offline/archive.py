@@ -73,7 +73,9 @@ class Archive:
 
     def _kick(self):
         with self.lock:
-            if self.worker and self.worker.is_alive():
+            # self.worker is cleared under this lock by a worker that finds the
+            # queue empty, so a live reference means the queue will be read again.
+            if self.worker is not None and self.worker.is_alive():
                 return
             if not any(e["status"] == "queued" for e in self.episodes.values()):
                 return
@@ -86,6 +88,9 @@ class Archive:
         with self.lock:
             queued = [e for e in self.episodes.values() if e["status"] == "queued"]
             if not queued:
+                # Leaving: decided under the lock, so an add() after this
+                # starts a new worker instead of trusting this one.
+                self.worker = None
                 return None
             ep = min(queued, key=lambda e: e["added"])
             ep["status"], ep["progress"] = "downloading", 0.0

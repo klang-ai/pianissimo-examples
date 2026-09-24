@@ -39,6 +39,10 @@ let finals = []
 let tentative = ''
 let lastFinal = -1
 let ws = null, audio = null, stream = null
+let stopped = null
+// How long Stop waits for the last segment. Long enough for a CPU run behind
+// a podcast batch; the text already on screen is kept either way.
+const STOP_WAIT_MS = 30000
 
 function draw() {
   const said = finals.join(' ')
@@ -53,6 +57,9 @@ function draw() {
 }
 
 async function start() {
+  // The server numbers segments from 0 in every session.
+  lastFinal = -1
+  tentative = ''
   stream = await navigator.mediaDevices.getUserMedia({
     audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
   })
@@ -63,6 +70,8 @@ async function start() {
     if (m.type === 'partial') {
       // A partial can land after its own segment was finalised. Drop it.
       if (m.segment > lastFinal) tentative = m.text
+    } else if (m.type === 'stopped') {
+      stopped?.()
     } else if (m.type === 'final') {
       lastFinal = m.segment
       tentative = ''
@@ -100,9 +109,15 @@ async function stop() {
   stream?.getTracks().forEach((t) => t.stop())
   await audio?.close()
   if (ws?.readyState === 1) {
+    const done = new Promise((r) => { stopped = r })
     ws.send(JSON.stringify({ type: 'stop' }))
-    // Give the last segment a moment to come back before closing.
-    await new Promise((r) => setTimeout(r, 1500))
+    const ok = await Promise.race([done.then(() => true),
+      new Promise((r) => setTimeout(() => r(false), STOP_WAIT_MS))])
+    stopped = null
+    if (!ok) {
+      $('info').textContent = 'The last few words did not come back in time. The rest is kept.'
+      if (tentative) finals.push(tentative)
+    }
     ws.close()
   }
   ws = audio = stream = null

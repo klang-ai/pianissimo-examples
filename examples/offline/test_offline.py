@@ -149,5 +149,68 @@ class Clip(unittest.TestCase):
         self.assertIn(f"PlayResX: {clip.W}", out)
 
 
+class Download(unittest.TestCase):
+    def test_ytdlp_item_is_refused_without_the_flag(self):
+        # An item can come straight from the page or from a saved archive job,
+        # so download() checks the flag itself.
+        with self.assertRaises(fetch.NotFound) as cm:
+            fetch.download({"kind": "ytdlp", "audio": "https://example.com/x"}, "/tmp", lambda d, t: None)
+        self.assertIn("--any-link", str(cm.exception))
+
+    def test_ytdlp_is_killed_at_the_deadline_even_when_silent(self):
+        import subprocess
+        import tempfile
+        real_popen, real_deadline, real_flag = subprocess.Popen, fetch.YTDLP_DEADLINE, fetch.ANY_LINK
+
+        def silent(args, **kw):
+            # Holds stdout open and prints nothing, like a stalled download.
+            return real_popen([sys.executable, "-c", "import time; time.sleep(30)"], **kw)
+        try:
+            fetch.ANY_LINK, fetch.YTDLP_DEADLINE = True, 1
+            fetch.subprocess.Popen = silent
+            with tempfile.TemporaryDirectory() as d, self.assertRaises(fetch.NotFound) as cm:
+                fetch.download({"kind": "ytdlp", "audio": "x"}, d, lambda a, b: None)
+            self.assertIn("did not finish", str(cm.exception))
+        finally:
+            fetch.subprocess.Popen, fetch.YTDLP_DEADLINE, fetch.ANY_LINK = real_popen, real_deadline, real_flag
+
+
+class Archive(unittest.TestCase):
+    def test_an_add_while_the_worker_is_leaving_is_picked_up(self):
+        import tempfile
+        import threading
+        import types
+        sys.modules.setdefault("asr", types.SimpleNamespace(RATE=16000))
+        import archive
+
+        with tempfile.TemporaryDirectory() as root:
+            archive.ROOT = root
+            a = archive.Archive(engine=None)
+            processed, gate, left = [], threading.Event(), threading.Event()
+            a._process = lambda ep: (processed.append(ep["id"]), ep.update(status="done"))
+
+            real_next = a._next
+
+            def slow_next():
+                ep = real_next()
+                if ep is None and not gate.is_set():
+                    # The worker has seen an empty queue and is about to leave.
+                    gate.set()
+                    left.wait(2)
+                return ep
+            a._next = slow_next
+
+            a.add([{"audio": "https://example.com/1.mp3"}])
+            gate.wait(2)
+            # Added in the window between the empty check and the thread exiting.
+            a.add([{"audio": "https://example.com/2.mp3"}])
+            left.set()
+            for _ in range(50):
+                if len(processed) == 2:
+                    break
+                threading.Event().wait(0.05)
+            self.assertEqual(len(processed), 2)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

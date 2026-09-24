@@ -10,10 +10,11 @@ Then open http://127.0.0.1:8765 and pick one:
   /archive    A whole show transcribed in the background, searchable.
   /compare    Two episodes: agree, differ, only in one.
 
-Everything runs on this machine. The speech model, the summary model and the
-server all bind to 127.0.0.1 and read their weights from the local cache, so
-both apps work in flight mode once the weights have been downloaded once.
-First run with --online to download them.
+Inference runs on this machine. The speech model, the summary model and this
+server all bind to 127.0.0.1 and read their weights from the local cache.
+Finding and downloading an episode needs the network; transcribing, summing up,
+clipping, asking and dictating do not. First run with --online to download the
+weights.
 """
 
 import argparse
@@ -114,72 +115,74 @@ def podcast_job(app, path, emit, meta=None, summarise=True):
     pieces = engine.pieces(audio)
     size = chapter_size(len(pieces))
     pool = ThreadPoolExecutor(max_workers=summary.SLOTS)
-    chapters = []
+    # Shut down on every way out, an exception from the model included.
+    try:
+        chapters = []
 
-    def make_chapter(start, text):
-        try:
-            c = summarizer.chapter(text)
-        except OSError as e:
-            c = {"title": "", "gist": "", "quote": "", "error": str(e)}
-        c["start"] = start
-        emit({"type": "chapter", **c})
-        return c
+        def make_chapter(start, text):
+            try:
+                c = summarizer.chapter(text)
+            except OSError as e:
+                c = {"title": "", "gist": "", "quote": "", "error": str(e)}
+            c["start"] = start
+            emit({"type": "chapter", **c})
+            return c
 
-    texts = job["pieces"]
-    for i in range(0, len(pieces), PODCAST_STEP):
-        batch = pieces[i:i + PODCAST_STEP]
-        out = engine.transcribe([clip for _, clip in batch], batch_size=PODCAST_STEP)
-        for (start, _), text in zip(batch, out):
-            texts.append((start, text))
-            emit({"type": "piece", "start": start, "text": text})
-            if use_summary and len(texts) % size == 0:
-                window = texts[-size:]
-                chapters.append(pool.submit(make_chapter, window[0][0],
-                                            " ".join(t for _, t in window)))
-        emit({"type": "progress", "done": min(i + PODCAST_STEP, len(pieces)),
-              "total": len(pieces), "elapsed": time.monotonic() - t_decoded})
-    rest = len(texts) % size
-    if use_summary and rest:
-        window = texts[-rest:]
-        chapters.append(pool.submit(make_chapter, window[0][0],
-                                    " ".join(t for _, t in window)))
-    t_transcribed = time.monotonic()
-    words = sum(len(t.split()) for _, t in texts)
-    emit({"type": "transcribed", "seconds": t_transcribed - t_decoded, "words": words,
-          "audioSeconds": seconds})
+        texts = job["pieces"]
+        for i in range(0, len(pieces), PODCAST_STEP):
+            batch = pieces[i:i + PODCAST_STEP]
+            out = engine.transcribe([clip for _, clip in batch], batch_size=PODCAST_STEP)
+            for (start, _), text in zip(batch, out):
+                texts.append((start, text))
+                emit({"type": "piece", "start": start, "text": text})
+                if use_summary and len(texts) % size == 0:
+                    window = texts[-size:]
+                    chapters.append(pool.submit(make_chapter, window[0][0],
+                                                " ".join(t for _, t in window)))
+            emit({"type": "progress", "done": min(i + PODCAST_STEP, len(pieces)),
+                  "total": len(pieces), "elapsed": time.monotonic() - t_decoded})
+        rest = len(texts) % size
+        if use_summary and rest:
+            window = texts[-rest:]
+            chapters.append(pool.submit(make_chapter, window[0][0],
+                                        " ".join(t for _, t in window)))
+        t_transcribed = time.monotonic()
+        words = sum(len(t.split()) for _, t in texts)
+        emit({"type": "transcribed", "seconds": t_transcribed - t_decoded, "words": words,
+              "audioSeconds": seconds})
 
-    if not use_summary:
-        pool.shutdown()
-        emit({"type": "done", "summary": False,
-              "reason": "summary skipped" if not summarise else
-              (summarizer.problem or "summary model did not start")
-              if summarizer else "summary disabled",
-              "totalSeconds": time.monotonic() - t_start})
+        if not use_summary:
+            emit({"type": "done", "summary": False,
+                  "reason": "summary skipped" if not summarise else
+                  (summarizer.problem or "summary model did not start")
+                  if summarizer else "summary disabled",
+                  "totalSeconds": time.monotonic() - t_start})
+            return job
+
+        chapters = [f.result() for f in chapters]
+        job["chapters"] = sorted(chapters, key=lambda c: c["start"])
+        t_chapters = time.monotonic()
+        good = [c for c in chapters if c["title"]]
+        quotes = [c for c in good if c["quote"]]
+        # The longest verified quote tends to be the one that says something.
+        best = max(quotes, key=lambda c: len(c["quote"]), default=None)
+
+        emit({"type": "summary-start", "chaptersWaited": t_chapters - t_transcribed})
+        first = None
+        for delta in summarizer.stream(good):
+            if first is None:
+                first = time.monotonic() - t_chapters
+            job["summary"] += delta
+            emit({"type": "summary", "text": delta})
+        t_end = time.monotonic()
+        job["quote"] = best and {"text": best["quote"], "start": best["start"]}
+        emit({"type": "done", "summary": True,
+              "quote": best and {"text": best["quote"], "start": best["start"]},
+              "summarySeconds": t_end - t_transcribed, "summaryFirstToken": first,
+              "totalSeconds": t_end - t_start})
         return job
-
-    chapters = [f.result() for f in chapters]
-    pool.shutdown()
-    job["chapters"] = sorted(chapters, key=lambda c: c["start"])
-    t_chapters = time.monotonic()
-    good = [c for c in chapters if c["title"]]
-    quotes = [c for c in good if c["quote"]]
-    # The longest verified quote tends to be the one that says something.
-    best = max(quotes, key=lambda c: len(c["quote"]), default=None)
-
-    emit({"type": "summary-start", "chaptersWaited": t_chapters - t_transcribed})
-    first = None
-    for delta in summarizer.stream(good):
-        if first is None:
-            first = time.monotonic() - t_chapters
-        job["summary"] += delta
-        emit({"type": "summary", "text": delta})
-    t_end = time.monotonic()
-    job["quote"] = best and {"text": best["quote"], "start": best["start"]}
-    emit({"type": "done", "summary": True,
-          "quote": best and {"text": best["quote"], "start": best["start"]},
-          "summarySeconds": t_end - t_transcribed, "summaryFirstToken": first,
-          "totalSeconds": t_end - t_start})
-    return job
+    finally:
+        pool.shutdown(wait=False)
 
 
 async def stream_events(request, job):
@@ -489,6 +492,10 @@ async def dictate(request):
         elif msg.type == WSMsgType.TEXT:
             if json.loads(msg.data).get("type") == "stop":
                 await close_segment()
+                # The page closes the socket on this, not on a timer, so the
+                # last segment is never cut off by a slow or busy model.
+                if not ws.closed:
+                    await ws.send_json({"type": "stopped"})
     return ws
 
 

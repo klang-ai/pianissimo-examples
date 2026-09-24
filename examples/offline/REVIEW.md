@@ -29,7 +29,7 @@ All on `127.0.0.1:8765`. Streaming routes answer with NDJSON, one event per line
 
 | Route | Method | Answers | Notes |
 |---|---|---|---|
-| `/api/status` | GET | JSON | Also runs the online check (a TCP connect to 1.1.1.1) |
+| `/api/status` | GET | JSON | Also runs the online check: a TCP connect to 1.1.1.1:443, then 8.8.8.8:53 if that fails, no payload. The page polls it every 3 s |
 | `/api/resolve` | POST | JSON | `{q}` to a list of episodes. Network |
 | `/api/podcast` | POST | NDJSON | Multipart file upload, then the podcast job |
 | `/api/podcast-url` | POST | NDJSON | `{item}` from resolve: download, then the podcast job. Network |
@@ -96,10 +96,11 @@ These were chosen on purpose. Each one is the thing to challenge if it looks wro
 
 Not fixed, and known. Listed so a review does not have to rediscover them.
 
-1. **Tests cover only the pure parts.** `test_offline.py` checks `fetch`, `ask`,
-   `summary` and `clip` where no model, network or ffmpeg is needed. The routes, the
-   dictation state machine, the archive worker and everything that touches a model
-   are still verified only by running them against real episodes.
+1. **Tests cover the parts that need no model.** `test_offline.py` checks `fetch`,
+   `ask`, `summary` and `clip`, the `--any-link` check at download, the yt-dlp
+   deadline, and the archive worker picking up an episode added while it was leaving.
+   The routes, the dictation page and everything that touches a model are verified
+   only by running them.
 2. **Nothing is ever cleaned up while the server runs.** Jobs stay in memory and
    downloads in the media dir until shutdown. An evening of long episodes is
    gigabytes.
@@ -113,18 +114,25 @@ Not fixed, and known. Listed so a review does not have to rediscover them.
    can hear a word differently. `clip.span` tolerates the drift by scoring how many
    words line up rather than demanding all of them.
 6. **YouTube through yt-dlp and Spotify's page** are off by default and behind
-   `--any-link`. With the flag they are fine on one's own machine and still wrong for
-   a hosted feature.
+   `--any-link`, checked both when a link is resolved and when a download starts.
+   Turning the flag on is the operator's choice, and the source's terms still apply.
+   Neither belongs in a hosted feature.
 7. **An orphaned `llama-server`.** It is started detached. If the Python server is
    killed hard, it keeps running on port 8099, and the next start reuses it.
 8. **The archive has no cancel and no retry.** A failed episode is marked and left;
-   adding it again requeues it. A yt-dlp download has a socket timeout of 30 s and a
-   final wait of 120 s; a plain download has a 60 s timeout per read.
+   adding it again requeues it. A yt-dlp download is killed after 30 minutes; a plain
+   download has a 60 s timeout per read.
 9. **Answers can attribute.** The prompts say never to guess who is speaking, but a
    name spoken in the transcript can end up attached to the wrong claim.
 10. **Audio playback in the page was not seen working** in the automated Chrome
     used during development, where media elements never loaded. The server's range
     responses were checked with curl (206, correct type).
+11. **Cover images load from the podcast's own servers.** The episode list and the
+    archive show `image` URLs from the feed directly, so opening those pages fetches
+    them, also after the audio is on disk.
+12. **The server does not check `Host`.** The Origin check stops other pages, but a
+    DNS-rebinding page could still reach it. Low risk for a local demo; would need a
+    Host allowlist before anything else.
 
 ## How to verify each part
 
