@@ -50,6 +50,40 @@ Svara exakt i det här formatet och inget annat:
 Punkterna ska vara slutsatser om hela avsnittet med egna ord, inte kapitlen upprepade.
 Skriv bara det som står i kapitlen. Hitta inte på namn eller siffror."""
 
+COMPARE_PROMPT = """Du jämför två svenska poddavsnitt, A och B, utifrån deras kapitel.
+Varje kapitel har en tidsstämpel som [A 12:30] eller [B 04:00].
+
+Svara exakt i det här formatet och inget annat:
+
+# <en rubrik om vad jämförelsen visar, högst tio ord>
+
+## Överens
+- <något båda avsnitten säger> [A mm:ss] [B mm:ss]
+
+## Oense
+- <där de säger olika saker, och vad var och en säger> [A mm:ss] [B mm:ss]
+
+## Bara i A
+- <något som bara tas upp i A> [A mm:ss]
+
+## Bara i B
+- <något som bara tas upp i B> [B mm:ss]
+
+Under Oense hör bara det där A och B faktiskt säger emot varandra om samma sak. Att de tar
+upp olika saker är inte oenighet, det hör under Bara i A och Bara i B.
+En sak står under en rubrik, aldrig under två.
+Två till fyra punkter per rubrik. Varje punkt slutar med tidsstämplarna den bygger på,
+kopierade ur kapitlen. Finns inget för en rubrik, skriv "- Inget." Skriv bara det som står i
+kapitlen, och hitta inte på namn."""
+
+
+def outline(tag, job):
+    head = f"Avsnitt {tag}: {job.get('title') or ''} ({job.get('show') or ''})"
+    lines = [f"[{tag} {stamp(c['start'])}] {c['title']}: {c['gist']}"
+             for c in job.get("chapters", []) if c.get("title")]
+    return head + "\n" + "\n".join(lines)
+
+
 def find_model():
     """The GGUF in the Hugging Face cache, or None if it was never downloaded."""
     cache = os.environ.get("HF_HUB_CACHE") or os.path.join(

@@ -191,3 +191,14 @@ audio { width: 100%; margin-top: 16px; }
 .row.done .pill { color: var(--ok); }
 .row.error .pill { color: var(--warn); }
 .row .p { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); transition: width .4s; }
+
+/* ---- compare ---- */
+.sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 28px; }
+@media (max-width: 860px) { .sides { grid-template-columns: none; } }
+.side { padding: 18px 20px; }
+.side .find { margin-top: 0; }
+.side .find input { font-size: 15px; padding: 9px 16px; box-shadow: none; }
+.side select { width: 100%; margin-top: 10px; font: inherit; font-size: 14px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--rule); background: var(--raise); color: var(--ink); }
+.side .status { margin: 10px 0 0; min-height: 1.4em; }
+.result { margin-top: 22px; }
+.ts.side-B { color: var(--ok); background: var(--ok-soft); }

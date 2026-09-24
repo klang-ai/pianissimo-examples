@@ -8,6 +8,16 @@ Turn the Wi-Fi off before you start. They work the same.
   click, and a quote checked against the transcript.
 - **Offline dictation.** Talk, and the text appears while you speak.
 
+And three things made from a finished episode:
+
+- **Clip.** Select any sentence in the transcript, or take the quote, and get a
+  9:16 video where each word lights up as it is spoken. Ready for LinkedIn.
+- **Ask the episode.** A question in Swedish, an answer with the minutes it came from.
+- **Show archive** (`/archive`). Paste a show, and every episode is transcribed in the
+  background and kept on disk. Then search all of them and play from the hit.
+- **Compare** (`/compare`). Two episodes on one subject: what they agree on,
+  where they differ, and what only one of them brings up.
+
 Nothing is uploaded. The browser talks to a server on `127.0.0.1`, the server
 reads both models from the local cache, and a badge in the corner shows whether
 the machine can reach the internet at all. That check opens a connection to
@@ -20,6 +30,7 @@ Python 3.10 or later, ffmpeg, and llama.cpp for the summary.
 ```bash
 python -m venv .venv && .venv/bin/pip install "nemo_toolkit[asr]" aiohttp soundfile
 brew install ffmpeg llama.cpp yt-dlp
+brew install ffmpeg-full   # only for clips: it has libass, which burns captions in
 ```
 
 Download both models once, with the network on:
@@ -78,6 +89,36 @@ alone runs at about 105 times real time on the M5's GPU.
 
 Dictation shows new text every 0.4 s, and each update takes 130 to 350 ms.
 
+## How each part works
+
+**Clip.** The selected text is found in the transcript, that stretch of audio is
+transcribed again with a timing for every word, and ffmpeg draws the frame: the show
+at the top, a waveform, and captions where each word fills in as it is said
+(ASS karaoke tags). A second pass can hear a word slightly differently from the
+first, and the captions follow the second pass, because that is the one the timings
+belong to.
+
+**Ask.** The question is ranked against the transcript's thirty second pieces with
+BM25 on five-letter stems (Swedish inflects: skatt, skatten, skatterna). The model
+gets the best six and is told to say "Det sägs inte i avsnittet" when they do not
+answer it. The page always lists the pieces as timestamps, whether or not the model
+cited them.
+
+**Archive.** One worker thread takes the queue in order: download, transcribe,
+write `<id>.json` next to the audio in `~/.cache/pianissimo/archive`
+(`PIANISSIMO_ARCHIVE` to move it). Anything cut short by a restart goes back in
+the queue.
+
+**Compare.** Both episodes go through the podcast job, chapters included, and the
+model compares the two chapter lists. Each point ends in `[A mm:ss]` or `[B mm:ss]`,
+which the page turns into buttons that play that episode from there.
+
+## What the other parts measured
+
+On the same M5: a 7 s clip in about 9 s. An answer in 4 to 5 s. Five episodes of
+Livet på lätt svenska, 1.9 hours, downloaded and transcribed in 76 s. Two
+episodes of 25 and 29 minutes compared in about 100 s.
+
 ## Limits
 
 - No speaker separation. The summary says what was said, not who said it,
@@ -85,3 +126,7 @@ Dictation shows new text every 0.4 s, and each update takes 130 to 350 ms.
 - The chapters are cut by time, a few minutes each, not by topic.
 - Dictation re-reads the open sentence as you speak, so the last few words can
   change until you pause.
+- The small model is weakest at disagreement. Under "Oense" it sometimes lists
+  something only one episode says, which belongs under "Bara i". A larger model
+  in `summary.py` fixes that and costs speed.
+- A Spotify exclusive has no public feed and cannot be fetched.

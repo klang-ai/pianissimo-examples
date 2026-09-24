@@ -344,6 +344,39 @@ async def archive_media(request):
     return web.FileResponse(path)
 
 
+async def compare(request):
+    """Run two episodes, then write what they agree and disagree on."""
+    body = await request.json()
+    items = {"A": body.get("a") or {}, "B": body.get("b") or {}}
+    if not all(i.get("audio") for i in items.values()):
+        return web.json_response({"error": "Pick two episodes."}, status=400)
+    app = request.app
+    summarizer = app["summarizer"]
+    if not summarizer or summarizer.problem:
+        return web.json_response({"error": "The local language model is not available."}, status=503)
+
+    def run(emit):
+        jobs = {}
+        for tag, item in items.items():
+            def side(event, tag=tag):
+                emit({**event, "side": tag})
+            folder = tempfile.mkdtemp(dir=app["media"])
+            path = fetch.download(item, folder, lambda d, t: side(
+                {"type": "download", "done": d, "total": t}))
+            jobs[tag] = podcast_job(app, path, side, item)
+            if not jobs[tag]:
+                return
+        emit({"type": "compare-start"})
+        t0 = time.monotonic()
+        for delta in summarizer.stream_text(
+                summary.COMPARE_PROMPT,
+                summary.outline("A", jobs["A"]) + "\n\n" + summary.outline("B", jobs["B"]), 700):
+            emit({"type": "compare", "text": delta})
+        emit({"type": "compare-done", "seconds": time.monotonic() - t0})
+
+    return await stream_events(request, run)
+
+
 # ---- dictation ---------------------------------------------------------------
 
 # Re-transcribe the open segment each time this much new audio has arrived.
@@ -514,6 +547,8 @@ def main():
     app.router.add_post("/api/clip", make_clip)
     app.router.add_post("/api/ask", ask_episode)
     app.router.add_get("/archive", page("archive.html"))
+    app.router.add_get("/compare", page("compare.html"))
+    app.router.add_post("/api/compare", compare)
     app.router.add_get("/api/archive", archive_status)
     app.router.add_post("/api/archive", archive_add)
     app.router.add_get("/api/archive/search", archive_search)
