@@ -7,8 +7,8 @@ export function watchNetwork(el, onStatus) {
       const s = await (await fetch('/api/status', { cache: 'no-store' })).json()
       el.className = 'net ' + (s.online ? 'on' : 'off')
       el.textContent = s.online
-        ? 'Online. Nothing you record or transcribe leaves this computer'
-        : 'Offline. Everything runs on this computer'
+        ? 'Internet on. Speech is processed on this computer'
+        : 'No internet. Still works'
       onStatus?.(s)
     } catch {
       el.className = 'net'

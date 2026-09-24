@@ -13,7 +13,8 @@ Reviewing the code rather than running it? Start with [REVIEW.md](REVIEW.md).
   the transcript. From a finished episode you can also **clip** any sentence as a 9:16 video
   with word-by-word captions, and **ask** it a question in Swedish and get the minutes the
   answer came from.
-- **Offline dictation.** Swedish speech to text as you speak.
+- **Dictation.** Swedish speech to text as you speak. The only one that never needs the
+  internet; the others need it once, to fetch the episode.
 - **Show archive** (`/archive`). Paste a show. Every episode is transcribed in the background
   and kept on disk. Search all of them and play from the hit.
 - **Compare** (`/compare`). Two episodes on one subject: what they agree on, where they
@@ -29,6 +30,8 @@ What uses the network:
 
 What does not: anything you record, upload or transcribe. Transcription, summaries, clips,
 answers and dictation run locally, and the browser only talks to the server on `127.0.0.1`.
+The badge in the corner says whether the machine has internet right now; turn the Wi-Fi off
+and it flips to "No internet. Still works", which is the point.
 
 ## Setup
 
