@@ -17,6 +17,7 @@ example says which one it uses.
 |---|---|---|
 | [`examples/subtitles/`](examples/subtitles/) | Subtitles a Swedish video: audio or video in, `.srt` out | Locally |
 | [`examples/local/`](examples/local/) | Transcribes one WAV file with the weights. Start here to check your setup | Locally |
+| [`examples/offline/`](examples/offline/) | Any podcast to a transcript, then a vertical clip of any sentence with word-by-word captions, on your own machine. Also live dictation | Locally |
 | [`examples/berget-realtime/`](examples/berget-realtime/) | Streams a file or the microphone and prints text as it arrives. Also our notes on the realtime API | Hosted |
 
 [![Varje dag en världsrevy (1937), subtitled by Pianissimo on a laptop CPU](examples/subtitles/sattmaskinen.gif)](examples/subtitles/)

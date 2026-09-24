@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Podcast to clip</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <a class="brand" href="/">Pianissimo <span>local</span></a>
+    <span class="net" id="net">Checking network</span>
+  </header>
+
+  <h1>Podcast to clip</h1>
+  <p class="lede" id="lede">Transcript with timestamps, then a vertical clip of any sentence. Made on this computer. Nothing you drop in is uploaded.</p>
+
+  <form class="find" id="find">
+    <input id="q" type="text" autocomplete="off" spellcheck="false"
+      placeholder="Paste a link, or type the name of an episode">
+    <button class="primary" type="submit" id="find-btn">Find</button>
+  </form>
+  <p class="sources">Apple Podcasts · Sveriges Radio · any RSS feed · any page with a player.</p>
+  <p class="hint" id="find-msg" hidden></p>
+  <div class="results" id="results"></div>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept="audio/*,video/*" hidden>
+    Or <strong>drop a file here</strong>. MP3, M4A, WAV or video.
+  </label>
+  <div class="bar" hidden id="bar"><i></i></div>
+  <audio id="player" controls hidden></audio>
+
+  <div class="stats" id="stats" hidden>
+    <div class="stat card"><span id="s-audio-label">Episode</span><b id="s-audio">·</b></div>
+    <div class="stat card"><span>Transcribed in</span><b id="s-asr">·</b></div>
+    <div class="stat card"><span>Real time</span><b id="s-rt">·</b></div>
+    <div class="stat card"><span>Total</span><b id="s-total">·</b></div>
+  </div>
+
+  <section class="pane card" id="cols" hidden>
+    <p class="label" id="t-label">Transcript</p>
+    <div class="transcript" id="transcript"></div>
+  </section>
+  <section class="clips" id="clips" hidden>
+    <p class="label">Clips</p>
+    <p class="hint">Select any sentence in the transcript to clip it.</p>
+    <div class="clip-grid" id="clip-grid"></div>
+  </section>
+  <button class="primary clip-float" id="clip-float" hidden>Clip this</button>
+  <p class="hint" id="footnote"></p>
+</div>
+
+<script type="module">
+import { watchNetwork } from '/static/net.js'
+
+const $ = (id) => document.getElementById(id)
+watchNetwork($('net'))
+
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+const clock = (sec) => {
+  sec = Math.max(0, Math.round(sec))
+  const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0')
+}
+const secs = (s) => s < 10 ? s.toFixed(1) + ' s' : Math.round(s) + ' s'
+const stampButton = (t) => `<button class="ts" data-t="${t}">${clock(t)}</button>`
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('.ts')
+  if (!b) return
+  const p = $('player')
+  p.currentTime = Number(b.dataset.t)
+  p.play()
+})
+
+const drop = $('drop')
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over') })
+drop.addEventListener('dragleave', () => drop.classList.remove('over'))
+drop.addEventListener('drop', (e) => {
+  e.preventDefault(); drop.classList.remove('over')
+  if (e.dataTransfer.files[0]) run({ file: e.dataTransfer.files[0] })
+})
+$('file').addEventListener('change', (e) => e.target.files[0] && run({ file: e.target.files[0] }))
+
+const fmtDur = (d) => d ? clock(d) : ''
+$('find').addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const q = $('q').value.trim()
+  if (!q || running) return
+  $('find-btn').disabled = true
+  $('find-msg').hidden = false
+  $('find-msg').textContent = 'Looking…'
+  $('results').innerHTML = ''
+  try {
+    const res = await fetch('/api/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ q }) })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error)
+    found = data.items
+    if (found.length === 1) {
+      $('find-msg').textContent = 'Found through ' + found[0].via + '.'
+      run({ item: found[0] })
+    } else {
+      $('find-msg').textContent = `${found.length} episodes, found through ${found[0].via}. Pick one.`
+      $('results').innerHTML = found.map((it, i) => `<button class="result card" data-i="${i}">
+        ${it.image ? `<img src="${esc(it.image)}" alt="">` : '<span class="noimg"></span>'}
+        <span><b>${esc(it.title || 'Episode')}</b><small>${esc([it.show, fmtDur(it.duration)].filter(Boolean).join(' · '))}</small></span>
+      </button>`).join('')
+    }
+  } catch (err) {
+    $('find-msg').textContent = err.message
+  } finally {
+    $('find-btn').disabled = false
+  }
+})
+let found = []
+$('results').addEventListener('click', (e) => {
+  const b = e.target.closest('.result')
+  if (b) run({ item: found[Number(b.dataset.i)] })
+})
+
+let jobId = null
+async function makeClip(body, label) {
+  $('clips').hidden = false
+  const card = document.createElement('div')
+  card.className = 'clip-card card'
+  card.innerHTML = `<p class="hint">Cutting “${esc(label.slice(0, 80))}”…</p>`
+  $('clip-grid').prepend(card)
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  const t0 = performance.now()
+  try {
+    const res = await fetch('/api/clip', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ job: jobId, ...body }) })
+    const c = await res.json()
+    if (!res.ok) throw new Error(c.error)
+    card.innerHTML = `<video src="${c.url}" controls playsinline preload="metadata"></video>
+      <p class="hint">${secs(c.seconds)} clip from ${clock(c.start)}, made in ${secs((performance.now() - t0) / 1000)}.
+      <a href="${c.url}" download>Download</a></p>`
+  } catch (err) {
+    card.innerHTML = `<p class="hint">${esc(err.message)}</p>`
+  }
+}
+document.addEventListener('mouseup', () => {
+  const sel = getSelection()
+  const text = sel.toString().trim()
+  const float = $('clip-float')
+  if (!jobId || !text || text.split(/\s+/).length < 3 || !$('transcript').contains(sel.anchorNode)) {
+    float.hidden = true
+    return
+  }
+  const r = sel.getRangeAt(0).getBoundingClientRect()
+  float.style.top = (scrollY + r.bottom + 8) + 'px'
+  float.style.left = (scrollX + r.left) + 'px'
+  float.dataset.text = text.replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, ' ')
+  float.hidden = false
+})
+$('clip-float').addEventListener('mousedown', (e) => e.preventDefault())
+$('clip-float').addEventListener('click', () => {
+  $('clip-float').hidden = true
+  makeClip({ text: $('clip-float').dataset.text }, $('clip-float').dataset.text)
+  getSelection().removeAllRanges()
+})
+
+let running = false
+async function run(source) {
+  const file = source.file
+  const item = source.item
+  if (running) return
+  running = true
+  drop.hidden = true
+  $('find').hidden = true
+  $('find-msg').hidden = true
+  document.querySelector('.sources').hidden = true
+  $('results').innerHTML = ''
+  if (file) {
+    $('player').src = URL.createObjectURL(file)
+    $('player').hidden = false
+  }
+  $('s-audio-label').textContent = item ? 'Downloading' : 'Episode'
+  if (item) $('lede').textContent = [item.title, item.show].filter(Boolean).join(' · ')
+  $('bar').hidden = false
+  $('stats').hidden = false
+  $('cols').hidden = false
+  $('transcript').innerHTML = ''
+  $('t-label').textContent = 'Transcript'
+  ;['s-asr', 's-rt', 's-total'].forEach((id) => { $(id).textContent = '·' })
+  $('s-audio').textContent = '…'
+
+  const t0 = performance.now()
+  const tick = setInterval(() => { $('s-total').textContent = secs((performance.now() - t0) / 1000) }, 100)
+  let asrStart = null
+  const asrTick = setInterval(() => {
+    if (asrStart && $('s-asr').dataset.done !== '1') $('s-asr').textContent = secs((performance.now() - asrStart) / 1000)
+  }, 100)
+  $('s-asr').dataset.done = ''
+
+  const req = file
+    ? (() => { const body = new FormData(); body.append('file', file); return { method: 'POST', body } })()
+    : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item }) }
+  try {
+    const res = await fetch(file ? '/api/podcast' : '/api/podcast-url', req)
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
+    let buf = ''
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += value
+      let nl
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const ev = JSON.parse(buf.slice(0, nl))
+        buf = buf.slice(nl + 1)
+        handle(ev)
+      }
+    }
+  } catch (err) {
+    $('footnote').textContent = 'Something went wrong: ' + err.message
+  } finally {
+    clearInterval(tick); clearInterval(asrTick)
+    $('s-total').textContent = secs((performance.now() - t0) / 1000)
+    running = false
+  }
+
+  function handle(ev) {
+    if (ev.type === 'job') {
+      jobId = ev.id
+    } else if (ev.type === 'download') {
+      $('s-audio').textContent = ev.total ? Math.round(100 * ev.done / ev.total) + ' %' : (ev.done / 1e6).toFixed(0) + ' MB'
+      if (ev.total) $('bar').firstElementChild.style.width = (100 * ev.done / ev.total) + '%'
+    } else if (ev.type === 'downloaded') {
+      $('player').src = ev.media
+      $('player').hidden = false
+      $('bar').firstElementChild.style.width = '0'
+      $('s-audio-label').textContent = 'Episode'
+      $('footnote').textContent = `Downloaded ${(ev.bytes / 1e6).toFixed(0)} MB in ${secs(ev.seconds)}. That was the last thing that needed the network, so the Wi-Fi can go off now.`
+    } else if (ev.type === 'start') {
+      $('s-audio').textContent = clock(ev.audioSeconds)
+      asrStart = performance.now()
+    } else if (ev.type === 'piece' && ev.text) {
+      const p = document.createElement('p')
+      p.innerHTML = stampButton(ev.start) + esc(ev.text)
+      $('transcript').append(p)
+    } else if (ev.type === 'progress') {
+      $('bar').firstElementChild.style.width = (100 * ev.done / ev.total) + '%'
+    } else if (ev.type === 'done') {
+      $('s-asr').dataset.done = '1'
+      $('s-asr').textContent = secs(ev.seconds)
+      // Audio seconds per second of transcription, on this machine.
+      $('s-rt').textContent = Math.round(ev.audioSeconds / ev.seconds) + 'x'
+      $('t-label').textContent = `Transcript, ${ev.words.toLocaleString('en')} words`
+      $('clips').hidden = false
+      $('bar').hidden = true
+    } else if (ev.type === 'error') {
+      $('footnote').textContent = ev.message
+    }
+  }
+}
+</script>
+</body>
+</html>
