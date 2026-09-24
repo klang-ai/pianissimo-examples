@@ -27,8 +27,8 @@ What uses the network:
 
 What does not: anything you record, upload or transcribe. Transcription, clips and dictation
 run locally, and the browser only talks to the server on `127.0.0.1`. The badge in the corner
-says whether the machine has internet right now; turn the Wi-Fi off and it flips to "No
-internet. Still works", which is the point.
+says whether the machine has internet right now. Turn the Wi-Fi off and it changes to "No
+internet. Still works"; transcription and clips carry on.
 
 ## Setup
 
