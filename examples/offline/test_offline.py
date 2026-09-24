@@ -11,10 +11,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import ask  # noqa: E402
 import clip  # noqa: E402
 import fetch  # noqa: E402
-import summary  # noqa: E402
 
 
 def word(i, text, step=0.35, length=0.3):
@@ -45,50 +43,15 @@ class Fetch(unittest.TestCase):
     def test_normal_strips_punctuation_and_entities(self):
         self.assertEqual(fetch.normal("Sommar &amp; vinter, i P1!"), "sommar vinter i p1")
 
-    def test_spotify_and_ytdlp_are_off_by_default(self):
-        self.assertFalse(fetch.ANY_LINK)
+    def test_spotify_is_refused_with_a_way_forward(self):
         with self.assertRaises(fetch.NotFound) as cm:
             fetch.resolve("https://open.spotify.com/episode/7t5EYXfU6usMYduhVBS9nQ")
-        self.assertIn("--any-link", str(cm.exception))
-        self.assertIsNone(fetch.from_ytdlp("https://www.youtube.com/watch?v=x"))
+        self.assertIn("Apple Podcasts link or RSS feed", str(cm.exception))
 
-
-class Summary(unittest.TestCase):
-    def test_normal_keeps_letters_and_digits_only(self):
-        self.assertEqual(summary._normal("Hej, DÄR! Vad… sa du 2?"), "hej där vad sa du 2")
-
-    def test_stamp_counts_minutes_past_the_hour(self):
-        self.assertEqual(summary.stamp(3725), "62:05")
-        self.assertEqual(summary.stamp(0), "00:00")
-
-    def test_outline_skips_chapters_without_a_title(self):
-        job = {"title": "Ep", "show": "Show",
-               "chapters": [{"start": 0, "title": "A", "gist": "a"}, {"start": 30, "title": "", "gist": "x"}]}
-        self.assertEqual(summary.outline("A", job), "Avsnitt A: Ep (Show)\n[A 00:00] A: a")
-
-
-class Ask(unittest.TestCase):
-    pieces = [(0, "Vi pratar om skatten och skatterna i Sverige"),
-              (30, "Fotboll och VM i sommar"),
-              (60, "Skattesystemet är krångligt sa hon")]
-
-    def test_stems_drop_stop_words_and_cut_at_five_letters(self):
-        self.assertEqual(ask._stems("Skatterna är höga, sa Anna-Karin"), ["skatt", "höga", "anna", "karin"])
-
-    def test_search_finds_inflected_forms_in_episode_order(self):
-        self.assertEqual(ask.search(self.pieces, "vad sa de om skatt?"), [0, 2])
-
-    def test_search_best_first_when_not_ordered(self):
-        hits = ask.search(self.pieces, "skattesystemet krångligt", ordered=False)
-        self.assertEqual(hits[0], 2)
-
-    def test_search_returns_nothing_for_unrelated_or_empty_questions(self):
-        self.assertEqual(ask.search(self.pieces, "bilar"), [])
-        self.assertEqual(ask.search(self.pieces, "och det är"), [])
-        self.assertEqual(ask.search([], "skatt"), [])
-
-    def test_excerpt_formats_with_stamp(self):
-        self.assertEqual(ask.excerpt(self.pieces, [1], summary.stamp), "[00:30] Fotboll och VM i sommar")
+    def test_a_direct_audio_link_needs_no_request(self):
+        items = fetch.resolve("https://example.com/show/episode-12.mp3")
+        self.assertEqual(items[0]["audio"], "https://example.com/show/episode-12.mp3")
+        self.assertEqual(items[0]["via"], "a direct link")
 
 
 class Clip(unittest.TestCase):
@@ -147,69 +110,6 @@ class Clip(unittest.TestCase):
         out = clip.ass(ws, 0.0)
         self.assertEqual(out.count("Dialogue:"), len(clip.cues(ws)))
         self.assertIn(f"PlayResX: {clip.W}", out)
-
-
-class Download(unittest.TestCase):
-    def test_ytdlp_item_is_refused_without_the_flag(self):
-        # An item can come straight from the page or from a saved archive job,
-        # so download() checks the flag itself.
-        with self.assertRaises(fetch.NotFound) as cm:
-            fetch.download({"kind": "ytdlp", "audio": "https://example.com/x"}, "/tmp", lambda d, t: None)
-        self.assertIn("--any-link", str(cm.exception))
-
-    def test_ytdlp_is_killed_at_the_deadline_even_when_silent(self):
-        import subprocess
-        import tempfile
-        real_popen, real_deadline, real_flag = subprocess.Popen, fetch.YTDLP_DEADLINE, fetch.ANY_LINK
-
-        def silent(args, **kw):
-            # Holds stdout open and prints nothing, like a stalled download.
-            return real_popen([sys.executable, "-c", "import time; time.sleep(30)"], **kw)
-        try:
-            fetch.ANY_LINK, fetch.YTDLP_DEADLINE = True, 1
-            fetch.subprocess.Popen = silent
-            with tempfile.TemporaryDirectory() as d, self.assertRaises(fetch.NotFound) as cm:
-                fetch.download({"kind": "ytdlp", "audio": "x"}, d, lambda a, b: None)
-            self.assertIn("did not finish", str(cm.exception))
-        finally:
-            fetch.subprocess.Popen, fetch.YTDLP_DEADLINE, fetch.ANY_LINK = real_popen, real_deadline, real_flag
-
-
-class Archive(unittest.TestCase):
-    def test_an_add_while_the_worker_is_leaving_is_picked_up(self):
-        import tempfile
-        import threading
-        import types
-        sys.modules.setdefault("asr", types.SimpleNamespace(RATE=16000))
-        import archive
-
-        with tempfile.TemporaryDirectory() as root:
-            archive.ROOT = root
-            a = archive.Archive(engine=None)
-            processed, gate, left = [], threading.Event(), threading.Event()
-            a._process = lambda ep: (processed.append(ep["id"]), ep.update(status="done"))
-
-            real_next = a._next
-
-            def slow_next():
-                ep = real_next()
-                if ep is None and not gate.is_set():
-                    # The worker has seen an empty queue and is about to leave.
-                    gate.set()
-                    left.wait(2)
-                return ep
-            a._next = slow_next
-
-            a.add([{"audio": "https://example.com/1.mp3"}])
-            gate.wait(2)
-            # Added in the window between the empty check and the thread exiting.
-            a.add([{"audio": "https://example.com/2.mp3"}])
-            left.set()
-            for _ in range(50):
-                if len(processed) == 2:
-                    break
-                threading.Event().wait(0.05)
-            self.assertEqual(len(processed), 2)
 
 
 if __name__ == "__main__":

@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
-"""Four offline Pianissimo apps on one local server.
+"""Two local Pianissimo apps on one server.
 
     .venv/bin/python examples/offline/server.py
 
 Then open http://127.0.0.1:8765 and pick one:
 
-  /podcast    Transcript, summary and chapters for an episode. Then clip it or ask it.
+  /podcast    Transcript of an episode, then a vertical clip of any sentence.
   /dictation  Swedish speech to text as you speak.
-  /archive    A whole show transcribed in the background, searchable.
-  /compare    Two episodes: agree, differ, only in one.
 
-Inference runs on this machine. The speech model, the summary model and this
-server all bind to 127.0.0.1 and read their weights from the local cache.
-Finding and downloading an episode needs the network; transcribing, summing up,
-clipping, asking and dictating do not. First run with --online to download the
-weights.
+Inference runs on this machine. The model and this server bind to 127.0.0.1 and
+read the weights from the local cache. Finding and downloading an episode needs
+the network; transcribing, clipping and dictating do not. First run with
+--online to download the weights.
 """
 
 import argparse
@@ -22,11 +19,11 @@ import asyncio
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -37,11 +34,6 @@ ap.add_argument("--port", type=int, default=8765)
 ap.add_argument("--device", help="cuda, mps or cpu (default: the fastest available)")
 ap.add_argument("--online", action="store_true",
                 help="allow Hugging Face downloads, for the first run only")
-ap.add_argument("--no-summary", action="store_true",
-                help="skip the summary model and only transcribe")
-ap.add_argument("--any-link", action="store_true",
-                help="also resolve Spotify links and, through yt-dlp, YouTube and similar "
-                     "sites. Off by default; see README")
 ap.add_argument("--verbose", action="store_true")
 args = ap.parse_args()
 
@@ -51,12 +43,9 @@ if args.online:
 import numpy as np  # noqa: E402
 from aiohttp import WSMsgType, web  # noqa: E402
 
-import archive  # noqa: E402
-import ask  # noqa: E402
 import asr  # noqa: E402
 import clip  # noqa: E402
 import fetch  # noqa: E402
-import summary  # noqa: E402
 
 RATE = asr.RATE
 # Pieces transcribed per step of a podcast job. Larger batches run faster in
@@ -72,24 +61,13 @@ def decode_to_wav(src, dest):
                     "-ar", str(RATE), "-c:a", "pcm_s16le", dest], check=True)
 
 
-def chapter_size(total_pieces):
-    """Pieces per chapter: aim for about eight chapters, two to ten minutes each."""
-    return max(4, min(20, -(-total_pieces // 8)))
-
-
-def podcast_job(app, path, emit, meta=None, summarise=True):
+def podcast_job(app, path, emit, meta=None):
     """Runs in a worker thread. emit() sends one event to the page.
 
-    The finished episode is kept in app["jobs"], with its audio, transcript and
-    chapters, so that clips, questions and comparisons can be made from it
-    afterwards without transcribing it again.
-
-    The summary is made in two passes so that a small local model stays fast.
-    Each chapter of a few minutes is summarised as soon as it is transcribed,
-    while the next one is still being transcribed, and the episode summary is
-    then written from the chapters rather than from the full transcript.
+    The finished episode is kept in app["jobs"], with its audio and transcript,
+    so that clips can be made from it afterwards without transcribing it again.
     """
-    engine, summarizer = app["engine"], app["summarizer"]
+    engine = app["engine"]
     t_start = time.monotonic()
     # The decoded audio stays next to the original, for clips later on.
     wav = os.path.join(os.path.dirname(path), "audio.wav")
@@ -104,85 +82,27 @@ def podcast_job(app, path, emit, meta=None, summarise=True):
     job = {"id": os.path.basename(os.path.dirname(path)), "path": path, "wav": wav,
            "media": "/media/" + os.path.relpath(path, app["media"]), "seconds": seconds,
            "title": (meta or {}).get("title"), "show": (meta or {}).get("show"),
-           "pieces": [], "chapters": [], "summary": "", "quote": None}
+           "pieces": []}
     app["jobs"][job["id"]] = job
     emit({"type": "job", "id": job["id"], "media": job["media"]})
     emit({"type": "start", "audioSeconds": seconds,
           "decodeSeconds": t_decoded - t_start, "device": engine.device})
 
-    use_summary = (summarise and summarizer is not None and not summarizer.problem
-                   and summarizer.wait())
     pieces = engine.pieces(audio)
-    size = chapter_size(len(pieces))
-    pool = ThreadPoolExecutor(max_workers=summary.SLOTS)
-    # Shut down on every way out, an exception from the model included.
-    try:
-        chapters = []
-
-        def make_chapter(start, text):
-            try:
-                c = summarizer.chapter(text)
-            except OSError as e:
-                c = {"title": "", "gist": "", "quote": "", "error": str(e)}
-            c["start"] = start
-            emit({"type": "chapter", **c})
-            return c
-
-        texts = job["pieces"]
-        for i in range(0, len(pieces), PODCAST_STEP):
-            batch = pieces[i:i + PODCAST_STEP]
-            out = engine.transcribe([clip for _, clip in batch], batch_size=PODCAST_STEP)
-            for (start, _), text in zip(batch, out):
-                texts.append((start, text))
-                emit({"type": "piece", "start": start, "text": text})
-                if use_summary and len(texts) % size == 0:
-                    window = texts[-size:]
-                    chapters.append(pool.submit(make_chapter, window[0][0],
-                                                " ".join(t for _, t in window)))
-            emit({"type": "progress", "done": min(i + PODCAST_STEP, len(pieces)),
-                  "total": len(pieces), "elapsed": time.monotonic() - t_decoded})
-        rest = len(texts) % size
-        if use_summary and rest:
-            window = texts[-rest:]
-            chapters.append(pool.submit(make_chapter, window[0][0],
-                                        " ".join(t for _, t in window)))
-        t_transcribed = time.monotonic()
-        words = sum(len(t.split()) for _, t in texts)
-        emit({"type": "transcribed", "seconds": t_transcribed - t_decoded, "words": words,
-              "audioSeconds": seconds})
-
-        if not use_summary:
-            emit({"type": "done", "summary": False,
-                  "reason": "summary skipped" if not summarise else
-                  (summarizer.problem or "summary model did not start")
-                  if summarizer else "summary disabled",
-                  "totalSeconds": time.monotonic() - t_start})
-            return job
-
-        chapters = [f.result() for f in chapters]
-        job["chapters"] = sorted(chapters, key=lambda c: c["start"])
-        t_chapters = time.monotonic()
-        good = [c for c in chapters if c["title"]]
-        quotes = [c for c in good if c["quote"]]
-        # The longest verified quote tends to be the one that says something.
-        best = max(quotes, key=lambda c: len(c["quote"]), default=None)
-
-        emit({"type": "summary-start", "chaptersWaited": t_chapters - t_transcribed})
-        first = None
-        for delta in summarizer.stream(good):
-            if first is None:
-                first = time.monotonic() - t_chapters
-            job["summary"] += delta
-            emit({"type": "summary", "text": delta})
-        t_end = time.monotonic()
-        job["quote"] = best and {"text": best["quote"], "start": best["start"]}
-        emit({"type": "done", "summary": True,
-              "quote": best and {"text": best["quote"], "start": best["start"]},
-              "summarySeconds": t_end - t_transcribed, "summaryFirstToken": first,
-              "totalSeconds": t_end - t_start})
-        return job
-    finally:
-        pool.shutdown(wait=False)
+    texts = job["pieces"]
+    for i in range(0, len(pieces), PODCAST_STEP):
+        batch = pieces[i:i + PODCAST_STEP]
+        out = engine.transcribe([clip for _, clip in batch], batch_size=PODCAST_STEP)
+        for (start, _), text in zip(batch, out):
+            texts.append((start, text))
+            emit({"type": "piece", "start": start, "text": text})
+        emit({"type": "progress", "done": min(i + PODCAST_STEP, len(pieces)),
+              "total": len(pieces), "elapsed": time.monotonic() - t_decoded})
+    t_end = time.monotonic()
+    words = sum(len(t.split()) for _, t in texts)
+    emit({"type": "done", "seconds": t_end - t_decoded, "words": words,
+          "audioSeconds": seconds, "totalSeconds": t_end - t_start})
+    return job
 
 
 async def stream_events(request, job):
@@ -288,102 +208,6 @@ async def make_clip(request):
         return web.json_response({"error": "ffmpeg failed: " + (e.stderr or "")[-300:]}, status=500)
     out["url"] = "/media/" + os.path.relpath(out.pop("file"), request.app["media"])
     return web.json_response(out)
-
-
-async def ask_episode(request):
-    """Answer a question from the parts of the transcript that are about it."""
-    body = await request.json()
-    job = request.app["jobs"].get(body.get("job"))
-    question = (body.get("question") or "").strip()
-    summarizer = request.app["summarizer"]
-    if not job or not question:
-        return web.json_response({"error": "Need an episode and a question."}, status=400)
-    if not summarizer or summarizer.problem:
-        return web.json_response({"error": "The local language model is not available."}, status=503)
-
-    def run(emit):
-        t0 = time.monotonic()
-        hits = ask.search(job["pieces"], question)
-        emit({"type": "sources", "starts": [job["pieces"][i][0] for i in hits]})
-        if not hits:
-            emit({"type": "answer", "text": "Det sägs inte i avsnittet."})
-        else:
-            for delta in summarizer.stream_text(
-                    ask.PROMPT, f"Fråga: {question}\n\nUtdrag:\n\n" +
-                    ask.excerpt(job["pieces"], hits, summary.stamp), 300):
-                emit({"type": "answer", "text": delta})
-        emit({"type": "done", "seconds": time.monotonic() - t0})
-
-    return await stream_events(request, run)
-
-
-async def archive_status(request):
-    return web.json_response({"episodes": request.app["archive"].status(),
-                              "root": archive.ROOT})
-
-
-async def archive_add(request):
-    """Queue episodes: either a list the page already has, or a show to look up."""
-    body = await request.json()
-    items = body.get("items")
-    if not items:
-        q = (body.get("q") or "").strip()
-        limit = int(body.get("limit") or 10)
-        try:
-            items = await asyncio.get_running_loop().run_in_executor(
-                None, lambda: fetch.resolve(q, limit=limit))
-        except fetch.NotFound as e:
-            return web.json_response({"error": str(e)}, status=404)
-        items = items[:limit]
-    added = request.app["archive"].add(items)
-    return web.json_response({"added": added, "found": len(items)})
-
-
-async def archive_search(request):
-    q = request.query.get("q", "").strip()
-    hits = request.app["archive"].search(q) if q else []
-    return web.json_response({"hits": hits})
-
-
-async def archive_media(request):
-    root = os.path.join(archive.ROOT, "media")
-    path = os.path.realpath(os.path.join(root, request.match_info["path"]))
-    if not path.startswith(os.path.realpath(root) + os.sep) or not os.path.isfile(path):
-        raise web.HTTPNotFound()
-    return web.FileResponse(path)
-
-
-async def compare(request):
-    """Run two episodes, then write what they agree and disagree on."""
-    body = await request.json()
-    items = {"A": body.get("a") or {}, "B": body.get("b") or {}}
-    if not all(i.get("audio") for i in items.values()):
-        return web.json_response({"error": "Pick two episodes."}, status=400)
-    app = request.app
-    summarizer = app["summarizer"]
-    if not summarizer or summarizer.problem:
-        return web.json_response({"error": "The local language model is not available."}, status=503)
-
-    def run(emit):
-        jobs = {}
-        for tag, item in items.items():
-            def side(event, tag=tag):
-                emit({**event, "side": tag})
-            folder = tempfile.mkdtemp(dir=app["media"])
-            path = fetch.download(item, folder, lambda d, t: side(
-                {"type": "download", "done": d, "total": t}))
-            jobs[tag] = podcast_job(app, path, side, item)
-            if not jobs[tag]:
-                return
-        emit({"type": "compare-start"})
-        t0 = time.monotonic()
-        for delta in summarizer.stream_text(
-                summary.COMPARE_PROMPT,
-                summary.outline("A", jobs["A"]) + "\n\n" + summary.outline("B", jobs["B"]), 700):
-            emit({"type": "compare", "text": delta})
-        emit({"type": "compare-done", "seconds": time.monotonic() - t0})
-
-    return await stream_events(request, run)
 
 
 # ---- dictation ---------------------------------------------------------------
@@ -501,15 +325,23 @@ async def dictate(request):
 
 # ---- pages and status --------------------------------------------------------
 
+def online():
+    """True if this machine can reach the internet right now."""
+    for host in (("1.1.1.1", 443), ("8.8.8.8", 53)):
+        try:
+            with socket.create_connection(host, timeout=0.6):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 async def status(request):
-    app = request.app
-    s = app["summarizer"]
-    is_online = await asyncio.get_running_loop().run_in_executor(None, summary.online)
+    is_online = await asyncio.get_running_loop().run_in_executor(None, online)
     return web.json_response({
         "online": is_online,
-        "device": app["engine"].device,
+        "device": request.app["engine"].device,
         "model": asr.MODEL,
-        "summary": None if s is None else (s.problem or "ready"),
     })
 
 
@@ -554,21 +386,11 @@ def main():
     asr.warm_up(engine)
     print(f"ready on {engine.device}, loaded in {engine.load_seconds:.1f} s", file=sys.stderr)
 
-    fetch.ANY_LINK = args.any_link
-    summarizer = None if args.no_summary else summary.Summarizer()
-    if summarizer:
-        if summarizer.problem:
-            print(f"summary off: {summarizer.problem}", file=sys.stderr)
-        else:
-            summarizer.start()
-
     app = web.Application(client_max_size=1 << 31, middlewares=[same_origin])
     app["origins"] = {f"http://127.0.0.1:{args.port}", f"http://localhost:{args.port}"}
     app["engine"] = engine
-    app["summarizer"] = summarizer
     app["media"] = tempfile.mkdtemp(prefix="pianissimo-")
     app["jobs"] = {}
-    app["archive"] = archive.Archive(engine)
     app.router.add_get("/", page("index.html"))
     app.router.add_get("/podcast", page("podcast.html"))
     app.router.add_get("/dictation", page("dictation.html"))
@@ -577,22 +399,12 @@ def main():
     app.router.add_post("/api/resolve", resolve)
     app.router.add_post("/api/podcast-url", podcast_url)
     app.router.add_post("/api/clip", make_clip)
-    app.router.add_post("/api/ask", ask_episode)
-    app.router.add_get("/archive", page("archive.html"))
-    app.router.add_get("/compare", page("compare.html"))
-    app.router.add_post("/api/compare", compare)
-    app.router.add_get("/api/archive", archive_status)
-    app.router.add_post("/api/archive", archive_add)
-    app.router.add_get("/api/archive/search", archive_search)
-    app.router.add_get("/archive-media/{path:.+}", archive_media)
     app.router.add_get("/ws/dictate", dictate)
     app.router.add_get("/media/{path:.+}", media)
     app.router.add_static("/static", os.path.join(HERE, "static"))
-    async def stop_summarizer(_):
-        if summarizer:
-            summarizer.stop()
+    async def clean_up(_):
         shutil.rmtree(app["media"], ignore_errors=True)
-    app.on_shutdown.append(stop_summarizer)
+    app.on_shutdown.append(clean_up)
 
     print(f"open http://127.0.0.1:{args.port}", file=sys.stderr)
     web.run_app(app, host="127.0.0.1", port=args.port, print=None)
