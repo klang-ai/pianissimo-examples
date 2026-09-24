@@ -1,7 +1,8 @@
 # Pianissimo examples
 
 Runnable examples for [Pianissimo](https://huggingface.co/KlangAI/pianissimo-sv), Klang's open
-Swedish speech-to-text model.
+Swedish speech-to-text model. Two ways to run it: locally on your own machine with the open
+weights, no API key, or streamed live through Berget AI's hosted realtime endpoint.
 
 [![A 1937 Swedish newsreel with subtitles generated on a laptop](examples/subtitles/sattmaskinen.gif)](examples/subtitles/)
 
@@ -12,6 +13,28 @@ Swedish speech-to-text model.
 | `cli/` | Streams a WAV file and prints text as it arrives | Against Berget AI's realtime endpoint |
 | `browser/` | Streams the microphone, through the relay in `relay/` | Against Berget AI's realtime endpoint |
 | `repro/` | Reproduces a first-word loss in the streaming path | Against Berget AI's realtime endpoint |
+
+## Local: run the weights yourself
+
+```bash
+python -m venv .venv && .venv/bin/pip install "nemo_toolkit[asr]"
+.venv/bin/python python/transcribe-offline.py your-audio.wav
+```
+
+Input: mono 16 kHz PCM16 WAV.
+
+Size: `nemo_toolkit[asr]` pulls PyTorch, about 1.7 GB, and the weights are 2.34 GB, downloaded
+once and cached.
+
+Measured on an M-series MacBook, CPU only, 45.8 seconds of Swedish speech:
+
+| | |
+|---|---|
+| Model load, first run | 181 s, including the 2.34 GB download |
+| Model load, cached | 5.7 s |
+| Transcription | 1.4 to 1.6 s, about 30x realtime |
+
+The launch figures are from an H100.
 
 ## Hosted: the realtime endpoint on Berget
 
@@ -56,29 +79,9 @@ open http://localhost:8787
 
 Press Start, speak Swedish, press Stop.
 
-## Local: run the weights yourself
-
-```bash
-python -m venv .venv && .venv/bin/pip install "nemo_toolkit[asr]"
-.venv/bin/python python/transcribe-offline.py your-audio.wav
-```
-
-Input: mono 16 kHz PCM16 WAV.
-
-Size: `nemo_toolkit[asr]` pulls PyTorch, about 1.7 GB, and the weights are 2.34 GB, downloaded
-once and cached.
-
-Measured on an M-series MacBook, CPU only, 45.8 seconds of Swedish speech:
-
-| | |
-|---|---|
-| Model load, first run | 181 s, including the 2.34 GB download |
-| Model load, cached | 5.7 s |
-| Transcription | 1.4 to 1.6 s, about 30x realtime |
-
-The launch figures are from an H100.
-
 ## Notes on the realtime API
+
+Things we ran into while building the streaming examples. Each one cost an hour or so to find.
 
 ### The browser cannot connect directly
 
