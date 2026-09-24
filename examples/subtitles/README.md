@@ -1,23 +1,25 @@
 # Subtitle a Swedish video
 
+Create an `.srt` file from Swedish audio or video. Pianissimo gives a timing for every word,
+and `cues.py` groups the words into subtitle lines with the limits listed below. The first
+thing we built on the model. Runs locally: no API key, no account, no upload.
+
 ![A 1937 Swedish newsreel with subtitles generated on a laptop](sattmaskinen.gif)
 
 *Varje dag en världsrevy (AB Svensk Filmindustri, 1937), public domain via Wikimedia Commons,
 cut to the parts with speech. Subtitled by Pianissimo on a laptop CPU, network off.*
 
-The first thing we built on the model. Audio or video in, a broadcast-shaped `.srt` out.
-Runs locally: no API key, no account, no upload. The weights come from Hugging Face once, and
-everything after that stays on your machine.
-
-The full fourteen minute film took 17 seconds on a MacBook CPU, 50 times faster than real
-time.
+Measured once: the full fourteen minute film took 17 seconds on a MacBook CPU, 50 times
+faster than real time.
 
 ## Setup
 
 Python 3.10 or later, and ffmpeg.
 
+Run everything from the repo root.
+
 ```bash
-python -m venv .venv && .venv/bin/pip install "nemo_toolkit[asr]"
+python3 -m venv .venv && .venv/bin/pip install "nemo_toolkit[asr]"
 brew install ffmpeg
 ```
 
@@ -25,6 +27,13 @@ The first run downloads 2.34 GB of weights and caches them. `nemo_toolkit[asr]` 
 PyTorch, about 1.7 GB.
 
 ## Run
+
+```bash
+.venv/bin/python examples/subtitles/subtitle.py examples/berget-realtime/repro/counting-sv.wav
+```
+
+That writes `counting-sv.srt` next to the clip; compare it with `sample.srt` in this
+folder. Then your own file:
 
 ```bash
 .venv/bin/python examples/subtitles/subtitle.py talk.mp4
@@ -67,8 +76,7 @@ skeppet. Allt går svindlande fort,
 men ibland blir det stopp.
 ```
 
-`sample.srt` in this directory is the real output for `examples/berget-realtime/repro/counting-sv.wav`,
-which ships with the repo, so you can regenerate a result without a file of your own.
+`sample.srt` in this directory is the real output for the bundled clip.
 
 ## How the cues are built
 
@@ -93,8 +101,8 @@ times are never moved, so a subtitle never appears before the word is spoken.
   minutes of fast parliamentary debate, 34 of 148 cues exceed it. Broadcast subtitlers
   paraphrase to fix this; a transcript should not.
 - **Long files are transcribed in one pass and held in memory.** Ten minutes of audio peaked
-  at 8.5 GB of resident memory, and it scales with duration. Cut files longer than about
-  twenty minutes first.
+  at 8.5 GB of resident memory in one measurement, and it scales with duration. Cut files
+  longer than about twenty minutes first.
 - Timings come from the model. Music and overlapping speech move them.
 - No speaker labels. One speaker per cue is assumed.
 - Swedish only. The model is monolingual.

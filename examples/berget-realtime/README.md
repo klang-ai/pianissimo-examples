@@ -1,8 +1,9 @@
 # Stream audio to the hosted endpoint
 
-Text back while the audio is still playing. This is the example to start from if you would
-rather call an endpoint than install PyTorch, or if you need live text at all. Runs hosted:
-`klang/pianissimo` on [Berget AI](https://berget.ai)'s realtime endpoint, over a WebSocket.
+Stream a WAV file or microphone audio to Pianissimo on [Berget AI](https://berget.ai)'s
+realtime endpoint and get text back while it plays. Runs hosted: the audio is sent to Berget,
+and you need an API key. Start here if you would rather call an endpoint than install
+PyTorch, or if you need live text.
 
 Three small programs and one reproduction:
 
@@ -10,7 +11,7 @@ Three small programs and one reproduction:
 |---|---|
 | `cli/transcribe-file.mjs` | Streams a WAV file and prints text as it arrives |
 | `browser/` | Streams the microphone from a web page, through the relay |
-| `relay/server.mjs` | Holds the API key and forwards WebSocket frames between browser and Berget |
+| `relay/server.mjs` | Holds the API key and forwards WebSocket frames between browser and Berget. Listens on 127.0.0.1 only, and accepts only pages it served itself |
 | `repro/first-word.mjs` | Reproduces a first-word loss in the streaming path |
 | `lib/` | The session messages and a WAV reader, shared by the three above |
 
@@ -28,11 +29,13 @@ export BERGET_API_KEY=sk_ber_...
 
 ## Transcribe a file
 
-Input: uncompressed PCM16 mono WAV, any sample rate.
+Input: uncompressed PCM16 mono WAV, any sample rate. The repo ships a clip to start with:
 
 ```bash
-node examples/berget-realtime/cli/transcribe-file.mjs your-audio.wav
+node examples/berget-realtime/cli/transcribe-file.mjs examples/berget-realtime/repro/counting-sv.wav
 ```
+
+The output below is from a different file, 14 seconds of debate audio:
 
 ```
 your-audio.wav: 14.0 s, PCM16 mono @ 16000 Hz
@@ -59,8 +62,6 @@ open http://localhost:8787
 Press Start, speak Swedish, press Stop.
 
 ## What we ran into
-
-Written down so you do not have to find them again.
 
 ### The browser cannot connect directly
 
@@ -154,7 +155,8 @@ and its turn closes on commit. Run B segments every 3 s and loses the opening wo
 weights run locally keep the word, so the loss is in the streaming path, not in the model.
 
 Berget reported a fix on 23 September 2026 that keeps the opening word at 3 s and 1 s chunks,
-with a release planned the same day. The output above is from before the fix.
+with a release planned the same day. The output above is from before the fix; we have not
+rerun it since.
 `repro/make-audio.sh` regenerates the clip with macOS text to speech.
 
 ---
