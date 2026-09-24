@@ -23,7 +23,7 @@ python3 -m venv .venv && .venv/bin/pip install "nemo_toolkit[asr]"
 .venv/bin/python examples/local/transcribe-offline.py samples/counting-sv.wav
 ```
 
-`nemo_toolkit[asr]` pulls PyTorch, about 1.7 GB. The first run downloads the model, 2.34 GB,
+`nemo_toolkit[asr]` pulls PyTorch, about 1.7 GB. The first run downloads the model, about 2.51 GB,
 and caches it. `samples/counting-sv.wav` is a 12-second Swedish clip.
 
 ## Built something on it?
