@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import unicodedata
+import uuid
 
 RATE = 16000
 MAX_SECONDS = 60.0
@@ -221,8 +222,8 @@ def make(engine, job, text=None, start=None, out_dir=None):
     words = words[i:j + 1]
     while len(words) > 1 and words[-1]["end"] - words[0]["start"] > MAX_SECONDS:
         words.pop()
-    n = len([f for f in os.listdir(out_dir) if f.startswith("clip-")]) // 2 + 1
-    out = os.path.join(out_dir, f"clip-{n}.mp4")
+    # A random name, not a count: two clips made at once would count the same.
+    out = os.path.join(out_dir, f"clip-{uuid.uuid4().hex[:8]}.mp4")
     length = render(job, words, out)
     return {"file": out, "seconds": length, "start": words[0]["start"],
             "text": " ".join(w["word"] for w in words)}

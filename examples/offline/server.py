@@ -500,6 +500,23 @@ async def status(request):
     })
 
 
+@web.middleware
+async def same_origin(request, handler):
+    """Refuse requests that a different web page sent.
+
+    The server listens on 127.0.0.1, but any page open in the browser can still
+    reach it: a form post or a text/plain fetch is sent without a CORS preflight,
+    and a WebSocket is not covered by CORS at all. Without this, any site could
+    make this machine download a URL of its choosing or open the microphone
+    socket. Browsers always send Origin on those requests; curl and scripts on
+    this machine send none and are let through.
+    """
+    origin = request.headers.get("Origin")
+    if origin and origin not in request.app["origins"]:
+        raise web.HTTPForbidden(text="cross-origin request refused")
+    return await handler(request)
+
+
 async def media(request):
     root = request.app["media"]
     path = os.path.realpath(os.path.join(root, request.match_info["path"]))
@@ -531,7 +548,8 @@ def main():
         else:
             summarizer.start()
 
-    app = web.Application(client_max_size=1 << 31)
+    app = web.Application(client_max_size=1 << 31, middlewares=[same_origin])
+    app["origins"] = {f"http://127.0.0.1:{args.port}", f"http://localhost:{args.port}"}
     app["engine"] = engine
     app["summarizer"] = summarizer
     app["media"] = tempfile.mkdtemp(prefix="pianissimo-")

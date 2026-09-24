@@ -1,5 +1,7 @@
 # Offline: a podcast summary and live dictation
 
+Reviewing the code rather than running it? Start with [REVIEW.md](REVIEW.md).
+
 Two small apps on one local server, both running Pianissimo on your own machine.
 Turn the Wi-Fi off before you start. They work the same.
 
