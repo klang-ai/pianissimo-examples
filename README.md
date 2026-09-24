@@ -1,38 +1,32 @@
 # Pianissimo examples
 
-Runnable examples for [Klang Pianissimo](https://huggingface.co/KlangAI/pianissimo-sv), an open
-Swedish speech-to-text model made by [Klang](https://klang.ai/pianissimo/?utm_source=github&utm_medium=referral&utm_campaign=pianissimo-subtitles&utm_content=readme).
-
-**Do a job with it:**
+Runnable examples for [Pianissimo](https://huggingface.co/KlangAI/pianissimo-sv), Klang's open
+Swedish speech-to-text model.
 
 [![A 1937 Swedish newsreel with subtitles generated on a laptop](examples/subtitles/sattmaskinen.gif)](examples/subtitles/)
 
-- [`examples/subtitles/`](examples/subtitles/) subtitles a Swedish video on your own machine.
-  No key, no account, no upload. A fourteen minute film in 17 seconds on a laptop CPU.
+| Directory | What it does | Runs |
+|---|---|---|
+| [`examples/subtitles/`](examples/subtitles/) | Subtitles a Swedish video: audio or video in, `.srt` out | Locally, no API key |
+| `python/` | Transcribes a WAV file with the weights | Locally, no API key |
+| `cli/` | Streams a WAV file and prints text as it arrives | Against Berget AI's realtime endpoint |
+| `browser/` | Streams the microphone, through the relay in `relay/` | Against Berget AI's realtime endpoint |
+| `repro/` | Reproduces a first-word loss in the streaming path | Against Berget AI's realtime endpoint |
 
-**Call the model directly:**
+## Hosted: the realtime endpoint on Berget
 
-- `cli/` streams a WAV file to [Berget AI](https://berget.ai) and prints text as it arrives.
-- `browser/` streams your microphone. Needs the relay in `relay/`, for the reason below.
-- `python/` runs the weights locally, no API key.
-
-Everything here was run before it was written down, not written from the spec.
-
-## Requirements
-
-- Node 20 or later
-- A Berget API key. Sign up at [berget.ai](https://berget.ai). The trial has no monthly cost and
-  starts with 5 EUR of credit, but a card is required at signup. At the current rate that credit
-  covers roughly 24 hours of audio.
+Node 20 or later, and a Berget API key from [berget.ai](https://berget.ai). The trial starts
+with 5 EUR of credit and requires a card at signup. At the current rate that covers roughly
+24 hours of audio.
 
 ```bash
 npm install
 export BERGET_API_KEY=sk_ber_...
 ```
 
-## Transcribe a file
+### Transcribe a file
 
-Input must be uncompressed PCM16 mono WAV. Any sample rate works.
+Input: uncompressed PCM16 mono WAV, any sample rate.
 
 ```bash
 node cli/transcribe-file.mjs your-audio.wav
@@ -47,15 +41,13 @@ hem till radhus och då säger Jag har blivit av med jobbet. Det blir ingen skid
 first text after 1.40 s
 ```
 
-Flags:
-
 | Flag | Effect |
 |---|---|
 | `--chunk-seconds N` | Seconds of speech per server segment. Default 1. |
 | `--server-default` | Leave `chunk_seconds` unset and use the server default. |
-| `--fast` | Send audio faster than realtime. Useful for testing, not for live input. |
+| `--fast` | Send audio faster than realtime. For testing, not for live input. |
 
-## Transcribe the microphone
+### Transcribe the microphone
 
 ```bash
 node relay/server.mjs
@@ -64,20 +56,17 @@ open http://localhost:8787
 
 Press Start, speak Swedish, press Stop.
 
-## Transcribe offline, no API key
-
-The weights are open. You can skip the hosted endpoint and run the model yourself.
+## Local: run the weights yourself
 
 ```bash
 python -m venv .venv && .venv/bin/pip install "nemo_toolkit[asr]"
 .venv/bin/python python/transcribe-offline.py your-audio.wav
 ```
 
-Input must be mono 16 kHz PCM16 WAV.
+Input: mono 16 kHz PCM16 WAV.
 
-Be honest with yourself about the cost before you start: `nemo_toolkit[asr]` pulls PyTorch and
-lands at about 1.7 GB, and the weights are another 2.34 GB downloaded once and cached. That is a
-different proposition from the realtime path, which is an API key and a few lines.
+Size: `nemo_toolkit[asr]` pulls PyTorch, about 1.7 GB, and the weights are 2.34 GB, downloaded
+once and cached.
 
 Measured on an M-series MacBook, CPU only, 45.8 seconds of Swedish speech:
 
@@ -87,28 +76,25 @@ Measured on an M-series MacBook, CPU only, 45.8 seconds of Swedish speech:
 | Model load, cached | 5.7 s |
 | Transcription | 1.4 to 1.6 s, about 30x realtime |
 
-The launch figures are from an H100. A laptop is two orders of magnitude slower and still
-transcribes three quarters of a minute of speech in under two seconds.
+The launch figures are from an H100.
 
-## What to know before you build
+## Notes on the realtime API
 
 ### The browser cannot connect directly
 
-Berget authenticates with an `Authorization` header. Browsers cannot set headers on a WebSocket.
-Query string and subprotocol auth both return 401, including OpenAI's
-`openai-insecure-api-key.<key>` convention. Verified against all six variants.
+Berget authenticates with an `Authorization` header, and browsers cannot set headers on a
+WebSocket. Query string and subprotocol auth both return 401, including OpenAI's
+`openai-insecure-api-key.<key>` convention; six variants were tried.
 
-So any web client needs a server that holds the key. `relay/server.mjs` is the smallest one that
-works: it forwards frames verbatim in both directions, so the browser code is the same code you
-would write against Berget, minus the credential. One detail matters. Forward frames as text.
-The `ws` library sends a Buffer as a binary frame, and the endpoint never answers those.
+A web client therefore needs a server that holds the key. `relay/server.mjs` forwards frames
+verbatim in both directions, so the browser code is what you would write against Berget, minus
+the credential. Forward frames as text: the `ws` library sends a Buffer as a binary frame, and
+the endpoint does not answer those.
 
-### `chunk_seconds` decides whether you get streaming at all
+### `chunk_seconds` controls whether text streams
 
-The default is **28 seconds**. Speak for less than that and you get one transcript at the end,
-which looks like the stream is broken. It is not.
-
-Set it explicitly, and set it in the right place:
+The default is 28 seconds. Speak for less than that and the transcript arrives in one piece at
+the end. Set it explicitly, under `transcription`:
 
 ```js
 session: {
@@ -126,11 +112,10 @@ session: {
 }
 ```
 
-Put `chunk_seconds` anywhere else and it is dropped silently, with no error. Read it back from
-`session.updated`, which echoes the configuration the server actually applied. That is the only
-way to see that it was ignored.
+Set anywhere else, it is dropped without an error. `session.updated` echoes the configuration
+the server applied, so read it back to check.
 
-### Faster text is worse text
+### A lower `chunk_seconds` gives earlier text and more errors
 
 Same 14 seconds of Swedish debate audio, one run each:
 
@@ -139,35 +124,34 @@ Same 14 seconds of Swedish debate audio, one run each:
 | `chunk_seconds` unset (28 s) | 4.21 s | "till radhuset och säger" ... "Jimmie Åkesson" |
 | `chunk_seconds: 1` | 1.40 s | "hem till radhus och då säger" ... "Jimmy Åkesson" |
 
-Pick the value for your use case. Live captions want 1. A meeting transcript that is read
-afterwards wants a higher value or the default.
+Live captions: 1. A transcript read afterwards: a higher value, or the default.
 
 ### Audio format
 
 - PCM16 little endian, mono. Also accepted: `audio/pcmu` and `audio/pcma` (G.711, 8 kHz).
-- The format and rate lock after the first `input_audio_buffer.append`. Decide up front.
-- The default rate is 24000 Hz. Send what you have and declare it, the server handles the rest.
-- The model itself is trained at 16 kHz.
+- The format and rate lock after the first `input_audio_buffer.append`.
+- The default rate is 24000 Hz. Send what you have and declare it; the server resamples.
+- The model is trained at 16 kHz.
 
 ### Turn handling
 
 - Without `turn_detection`, commit turns yourself with `input_audio_buffer.commit`.
-- With `turn_detection: { type: 'server_vad' }`, turns commit on speech pauses. On continuous
-  speech with no pause, nothing commits, so set `chunk_seconds` too if you want text meanwhile.
+- With `turn_detection: { type: 'server_vad' }`, turns commit on speech pauses. Continuous
+  speech with no pause never commits, so set `chunk_seconds` too if you want text meanwhile.
 - `semantic_vad` is not implemented.
-- Sessions survive across turns but are not resumable. On close codes 1012 and 1013 the node is
-  draining for a deploy: reconnect and start a new session.
+- Sessions survive across turns but are not resumable. Close codes 1012 and 1013 mean the node
+  is draining for a deploy: reconnect and start a new session.
 
 ### Batch transcription is a different endpoint
 
-`POST /v1/audio/transcriptions` does not serve `klang/pianissimo`. The realtime endpoint serves
-only `klang/pianissimo` and rejects everything else. Pianissimo is a streaming model here; for
-finished recordings Berget offers other models on the batch endpoint.
+`POST /v1/audio/transcriptions` does not serve `klang/pianissimo`, and the realtime endpoint
+serves only `klang/pianissimo`. For finished recordings, Berget offers other models on the
+batch endpoint.
 
 ## Reproducing the first-word loss
 
-`repro/first-word.mjs` runs one audio file through two sessions. The only difference between them
-is `chunk_seconds`. Audio, pacing, sample rate and model are identical.
+`repro/first-word.mjs` runs one audio file through two sessions that differ only in
+`chunk_seconds`. Audio, pacing, sample rate and model are identical.
 
 ```bash
 BERGET_API_KEY=sk_ber_... node repro/first-word.mjs
@@ -183,21 +167,17 @@ BERGET_API_KEY=sk_ber_... node repro/first-word.mjs
     Stockholm är Sveriges huvudstad. Två. Göteborg ligger på V. Tre. ...
 ```
 
-The clip is 12.2 s, shorter than the 28 s default, so run A is never segmented by the timer and
-its turn closes on commit. Run B segments every 3 s and loses the opening word.
+The clip is 12.2 s, shorter than the 28 s default, so run A is never segmented by the timer
+and its turn closes on commit. Run B segments every 3 s and loses the opening word. The same
+weights run locally keep the word, so the loss is in the streaming path, not in the model.
 
-The same weights run locally keep the word, so this sits in the streaming path rather than in the
-model. Berget reported a fix on 23 September 2026 that keeps the opening word at 3 s and 1 s
-chunks, with a release planned the same day. Run the script to see what you get; the output
-above is from before the fix. `repro/make-audio.sh` regenerates the clip with macOS text to speech if you want your own.
+Berget reported a fix on 23 September 2026 that keeps the opening word at 3 s and 1 s chunks,
+with a release planned the same day. The output above is from before the fix.
+`repro/make-audio.sh` regenerates the clip with macOS text to speech.
 
 ## License
 
-MIT, matching [`klang-ai/klang-sdk-ts`](https://github.com/klang-ai/klang-sdk-ts). See `LICENSE`.
+MIT, see `LICENSE`. It covers the example code only; no weights ship with this repository.
 
-This covers the example code only. It ships no model weights and calls the API over HTTP, so the
-model's own license governs the model, not this repository.
-
-One thing worth knowing if you go on to download the weights: the model is published as
-`cc-by-4.0` on Hugging Face and listed as `Apache 2.0` in Berget's model catalog. Check which
-applies before you build on it commercially.
+The model is published as `cc-by-4.0` on Hugging Face and listed as `Apache 2.0` in Berget's
+model catalog. Check which applies before building on it commercially.
