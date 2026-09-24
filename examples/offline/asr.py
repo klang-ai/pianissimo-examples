@@ -101,6 +101,22 @@ class Engine:
             result = result[0]
         return [_text(h) for h in result]
 
+    def words(self, clip, offset=0.0):
+        """Word level timings for one clip, in seconds from offset."""
+        with self.lock, self._torch.inference_mode():
+            result = self.model.transcribe(audio=[clip], batch_size=1, return_hypotheses=True,
+                                           timestamps=True, verbose=False)
+        if isinstance(result, tuple):
+            result = result[0]
+        stamps = getattr(result[0], "timestamp", None) or {}
+        out = []
+        for w in stamps.get("word", []):
+            text = (w.get("word") or w.get("char") or "").strip()
+            if text:
+                out.append({"word": text, "start": float(w["start"]) + offset,
+                            "end": float(w["end"]) + offset})
+        return out
+
     def pieces(self, audio):
         """Cut long audio into pieces, each with its start time in seconds."""
         step = PIECE_SECONDS * RATE

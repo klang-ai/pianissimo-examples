@@ -46,6 +46,7 @@ import numpy as np  # noqa: E402
 from aiohttp import WSMsgType, web  # noqa: E402
 
 import asr  # noqa: E402
+import clip  # noqa: E402
 import fetch  # noqa: E402
 import summary  # noqa: E402
 
@@ -68,29 +69,41 @@ def chapter_size(total_pieces):
     return max(4, min(20, -(-total_pieces // 8)))
 
 
-def podcast_job(engine, summarizer, path, emit):
+def podcast_job(app, path, emit, meta=None, summarise=True):
     """Runs in a worker thread. emit() sends one event to the page.
+
+    The finished episode is kept in app["jobs"], with its audio, transcript and
+    chapters, so that clips, questions and comparisons can be made from it
+    afterwards without transcribing it again.
 
     The summary is made in two passes so that a small local model stays fast.
     Each chapter of a few minutes is summarised as soon as it is transcribed,
     while the next one is still being transcribed, and the episode summary is
     then written from the chapters rather than from the full transcript.
     """
+    engine, summarizer = app["engine"], app["summarizer"]
     t_start = time.monotonic()
-    with tempfile.TemporaryDirectory() as tmp:
-        wav = os.path.join(tmp, "audio.wav")
-        try:
-            decode_to_wav(path, wav)
-        except subprocess.CalledProcessError:
-            emit({"type": "error", "message": "ffmpeg could not read that file."})
-            return
-        audio = asr.load_wav(wav)
+    # The decoded audio stays next to the original, for clips later on.
+    wav = os.path.join(os.path.dirname(path), "audio.wav")
+    try:
+        decode_to_wav(path, wav)
+    except subprocess.CalledProcessError:
+        emit({"type": "error", "message": "ffmpeg could not read that file."})
+        return None
+    audio = asr.load_wav(wav)
     seconds = len(audio) / RATE
     t_decoded = time.monotonic()
+    job = {"id": os.path.basename(os.path.dirname(path)), "path": path, "wav": wav,
+           "media": "/media/" + os.path.relpath(path, app["media"]), "seconds": seconds,
+           "title": (meta or {}).get("title"), "show": (meta or {}).get("show"),
+           "pieces": [], "chapters": [], "summary": "", "quote": None}
+    app["jobs"][job["id"]] = job
+    emit({"type": "job", "id": job["id"], "media": job["media"]})
     emit({"type": "start", "audioSeconds": seconds,
           "decodeSeconds": t_decoded - t_start, "device": engine.device})
 
-    use_summary = summarizer is not None and not summarizer.problem and summarizer.wait()
+    use_summary = (summarise and summarizer is not None and not summarizer.problem
+                   and summarizer.wait())
     pieces = engine.pieces(audio)
     size = chapter_size(len(pieces))
     pool = ThreadPoolExecutor(max_workers=summary.SLOTS)
@@ -105,7 +118,7 @@ def podcast_job(engine, summarizer, path, emit):
         emit({"type": "chapter", **c})
         return c
 
-    texts = []
+    texts = job["pieces"]
     for i in range(0, len(pieces), PODCAST_STEP):
         batch = pieces[i:i + PODCAST_STEP]
         out = engine.transcribe([clip for _, clip in batch], batch_size=PODCAST_STEP)
@@ -130,13 +143,15 @@ def podcast_job(engine, summarizer, path, emit):
 
     if not use_summary:
         emit({"type": "done", "summary": False,
-              "reason": (summarizer.problem or "summary model did not start")
+              "reason": "summary skipped" if not summarise else
+              (summarizer.problem or "summary model did not start")
               if summarizer else "summary disabled",
               "totalSeconds": time.monotonic() - t_start})
-        return
+        return job
 
     chapters = [f.result() for f in chapters]
     pool.shutdown()
+    job["chapters"] = sorted(chapters, key=lambda c: c["start"])
     t_chapters = time.monotonic()
     good = [c for c in chapters if c["title"]]
     quotes = [c for c in good if c["quote"]]
@@ -148,12 +163,15 @@ def podcast_job(engine, summarizer, path, emit):
     for delta in summarizer.stream(good):
         if first is None:
             first = time.monotonic() - t_chapters
+        job["summary"] += delta
         emit({"type": "summary", "text": delta})
     t_end = time.monotonic()
+    job["quote"] = best and {"text": best["quote"], "start": best["start"]}
     emit({"type": "done", "summary": True,
           "quote": best and {"text": best["quote"], "start": best["start"]},
           "summarySeconds": t_end - t_transcribed, "summaryFirstToken": first,
           "totalSeconds": t_end - t_start})
+    return job
 
 
 async def stream_events(request, job):
@@ -189,16 +207,14 @@ async def podcast(request):
         return web.json_response({"error": "send the audio as a form field named file"},
                                  status=400)
     suffix = os.path.splitext(field.filename or "")[1] or ".audio"
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    try:
+    app = request.app
+    # Kept until the server stops, like a downloaded episode.
+    path = os.path.join(tempfile.mkdtemp(dir=app["media"]), "episode" + suffix)
+    with open(path, "wb") as f:
         while chunk := await field.read_chunk(1 << 20):
-            tmp.write(chunk)
-        tmp.close()
-        app = request.app
-        return await stream_events(request, lambda emit: podcast_job(
-            app["engine"], app["summarizer"], tmp.name, emit))
-    finally:
-        os.unlink(tmp.name)
+            f.write(chunk)
+    meta = {"title": os.path.splitext(field.filename or "Episode")[0]}
+    return await stream_events(request, lambda emit: podcast_job(app, path, emit, meta))
 
 
 async def resolve(request):
@@ -239,9 +255,28 @@ async def podcast_url(request):
         emit({"type": "downloaded", "bytes": os.path.getsize(path),
               "seconds": time.monotonic() - t0,
               "media": "/media/" + os.path.relpath(path, app["media"])})
-        podcast_job(app["engine"], app["summarizer"], path, emit)
+        podcast_job(app, path, emit, item)
 
     return await stream_events(request, job)
+
+
+async def make_clip(request):
+    """A vertical video of one quote from a finished episode."""
+    body = await request.json()
+    job = request.app["jobs"].get(body.get("job"))
+    if not job:
+        return web.json_response({"error": "That episode is no longer on the server."}, status=404)
+    loop = asyncio.get_running_loop()
+    try:
+        out = await loop.run_in_executor(None, lambda: clip.make(
+            request.app["engine"], job, text=body.get("text"), start=body.get("start"),
+            out_dir=os.path.dirname(job["path"])))
+    except LookupError as e:
+        return web.json_response({"error": str(e)}, status=422)
+    except subprocess.CalledProcessError as e:
+        return web.json_response({"error": "ffmpeg failed: " + (e.stderr or "")[-300:]}, status=500)
+    out["url"] = "/media/" + os.path.relpath(out.pop("file"), request.app["media"])
+    return web.json_response(out)
 
 
 # ---- dictation ---------------------------------------------------------------
@@ -402,6 +437,7 @@ def main():
     app["engine"] = engine
     app["summarizer"] = summarizer
     app["media"] = tempfile.mkdtemp(prefix="pianissimo-")
+    app["jobs"] = {}
     app.router.add_get("/", page("index.html"))
     app.router.add_get("/podcast", page("podcast.html"))
     app.router.add_get("/dictation", page("dictation.html"))
@@ -409,6 +445,7 @@ def main():
     app.router.add_post("/api/podcast", podcast)
     app.router.add_post("/api/resolve", resolve)
     app.router.add_post("/api/podcast-url", podcast_url)
+    app.router.add_post("/api/clip", make_clip)
     app.router.add_get("/ws/dictate", dictate)
     app.router.add_get("/media/{path:.+}", media)
     app.router.add_static("/static", os.path.join(HERE, "static"))

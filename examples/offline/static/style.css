@@ -144,3 +144,13 @@ audio { width: 100%; margin-top: 16px; }
 .result small { display: block; color: var(--faint); font-size: 13px; margin-top: 2px; }
 .drop { display: block; margin-top: 18px; padding: 22px 20px; }
 [hidden] { display: none !important; }
+
+/* ---- clips ---- */
+.clips { margin-top: 22px; }
+.clip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.clip-card { padding: 10px; }
+.clip-card video { width: 100%; aspect-ratio: 9 / 16; border-radius: 8px; background: #000052; display: block; }
+.clip-card .hint { margin: 8px 2px 2px; }
+.clip-card a { color: var(--accent); }
+.clip-btn { margin-top: 12px; }
+.clip-float { position: absolute; z-index: 10; padding: 7px 14px; font-size: 14px; box-shadow: var(--shadow); }

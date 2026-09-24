@@ -54,6 +54,12 @@
       <div class="transcript" id="transcript"></div>
     </section>
   </div>
+  <section class="clips" id="clips" hidden>
+    <p class="label">Clips</p>
+    <p class="hint">Select any sentence in the transcript to clip it, or use the quote.</p>
+    <div class="clip-grid" id="clip-grid"></div>
+  </section>
+  <button class="primary clip-float" id="clip-float" hidden>Clip this</button>
   <p class="hint" id="footnote"></p>
 </div>
 
@@ -155,6 +161,47 @@ $('results').addEventListener('click', (e) => {
   if (b) run({ item: found[Number(b.dataset.i)] })
 })
 
+let jobId = null
+async function makeClip(body, label) {
+  $('clips').hidden = false
+  const card = document.createElement('div')
+  card.className = 'clip-card card'
+  card.innerHTML = `<p class="hint">Cutting “${esc(label.slice(0, 80))}”…</p>`
+  $('clip-grid').prepend(card)
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  const t0 = performance.now()
+  try {
+    const res = await fetch('/api/clip', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ job: jobId, ...body }) })
+    const c = await res.json()
+    if (!res.ok) throw new Error(c.error)
+    card.innerHTML = `<video src="${c.url}" controls playsinline preload="metadata"></video>
+      <p class="hint">${secs(c.seconds)} clip from ${clock(c.start)}, made in ${secs((performance.now() - t0) / 1000)}.
+      <a href="${c.url}" download>Download</a></p>`
+  } catch (err) {
+    card.innerHTML = `<p class="hint">${esc(err.message)}</p>`
+  }
+}
+document.addEventListener('mouseup', () => {
+  const sel = getSelection()
+  const text = sel.toString().trim()
+  const float = $('clip-float')
+  if (!jobId || !text || text.split(/\s+/).length < 3 || !$('transcript').contains(sel.anchorNode)) {
+    float.hidden = true
+    return
+  }
+  const r = sel.getRangeAt(0).getBoundingClientRect()
+  float.style.top = (scrollY + r.bottom + 8) + 'px'
+  float.style.left = (scrollX + r.left) + 'px'
+  float.dataset.text = text.replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, ' ')
+  float.hidden = false
+})
+$('clip-float').addEventListener('mousedown', (e) => e.preventDefault())
+$('clip-float').addEventListener('click', () => {
+  $('clip-float').hidden = true
+  makeClip({ text: $('clip-float').dataset.text }, $('clip-float').dataset.text)
+  getSelection().removeAllRanges()
+})
+
 let running = false
 async function run(source) {
   const file = source.file
@@ -221,7 +268,9 @@ async function run(source) {
   }
 
   function handle(ev) {
-    if (ev.type === 'download') {
+    if (ev.type === 'job') {
+      jobId = ev.id
+    } else if (ev.type === 'download') {
       $('s-audio').textContent = ev.total ? Math.round(100 * ev.done / ev.total) + ' %' : (ev.done / 1e6).toFixed(0) + ' MB'
       if (ev.total) $('bar').firstElementChild.style.width = (100 * ev.done / ev.total) + '%'
     } else if (ev.type === 'downloaded') {
@@ -262,7 +311,8 @@ async function run(source) {
         $('summary').innerHTML = render(summaryText)
         if (ev.quote) {
           $('quote').innerHTML = '<h3>Quote</h3><blockquote>' + stampButton(clock(ev.quote.start)) +
-            esc(ev.quote.text) + '</blockquote>'
+            esc(ev.quote.text) + '</blockquote><button class="clip-btn" id="clip-quote">Make a 9:16 clip</button>'
+          $('clip-quote').onclick = () => makeClip({ text: ev.quote.text }, ev.quote.text)
         }
       } else {
         $('s-sum').textContent = 'off'
