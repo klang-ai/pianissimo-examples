@@ -4,11 +4,11 @@ Paste a podcast, get the transcript, and turn any sentence into a vertical clip 
 that light up word by word. Pianissimo does all of it, on this machine, behind a local web
 server. Download the model, and any episodes you want, before going offline.
 
-![The podcast page: a 52 minute episode transcribed in 32 s](podcast-page.png)
+![The podcast page: a 52 minute episode transcribed in 30 s, 105 times real time](podcast-page.png)
 
 ![A frame from a clip: the quote fills in word by word over a waveform](clip-frame.png)
 
-*Left: a 52 minute episode, transcribed in 32 s on a MacBook Pro M5, 38 s including the
+*Left: a 52 minute episode, transcribed in 30 s on a MacBook Pro M5, 36 s including the
 download. Right: a clip made from one sentence of a P1 Kultur report. The captions light up
 word by word as it is spoken.*
 
@@ -102,9 +102,9 @@ transcribed again every 0.4 s, so the text updates as you speak, and a segment c
 
 ## What we measured
 
-Each measured once, on a MacBook Pro with an M5 and 24 GB. A 52 minute episode: 32 s from
-the download finishing to the last piece on the page, just under 100 times real time. That
-includes decoding with ffmpeg.
+Each measured once, on a MacBook Pro with an M5 and 24 GB. A 52 minute episode: 30 s from
+the download finishing to the last piece on the page, 105 times real time. That includes
+decoding with ffmpeg. The page shows the factor for your own machine.
 
 A 3 s clip in about 4 s, from the request to the video on the page.
 

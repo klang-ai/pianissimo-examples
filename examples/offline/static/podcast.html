@@ -35,6 +35,7 @@
   <div class="stats" id="stats" hidden>
     <div class="stat card"><span id="s-audio-label">Episode</span><b id="s-audio">·</b></div>
     <div class="stat card"><span>Transcribed in</span><b id="s-asr">·</b></div>
+    <div class="stat card"><span>Real time</span><b id="s-rt">·</b></div>
     <div class="stat card"><span>Total</span><b id="s-total">·</b></div>
   </div>
 
@@ -182,7 +183,7 @@ async function run(source) {
   $('cols').hidden = false
   $('transcript').innerHTML = ''
   $('t-label').textContent = 'Transcript'
-  ;['s-asr', 's-total'].forEach((id) => { $(id).textContent = '·' })
+  ;['s-asr', 's-rt', 's-total'].forEach((id) => { $(id).textContent = '·' })
   $('s-audio').textContent = '…'
 
   const t0 = performance.now()
@@ -243,6 +244,8 @@ async function run(source) {
     } else if (ev.type === 'done') {
       $('s-asr').dataset.done = '1'
       $('s-asr').textContent = secs(ev.seconds)
+      // Audio seconds per second of transcription, on this machine.
+      $('s-rt').textContent = Math.round(ev.audioSeconds / ev.seconds) + 'x'
       $('t-label').textContent = `Transcript, ${ev.words.toLocaleString('en')} words`
       $('clips').hidden = false
       $('bar').hidden = true
