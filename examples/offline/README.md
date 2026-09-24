@@ -3,8 +3,9 @@
 Two small apps on one local server, both running Pianissimo on your own machine.
 Turn the Wi-Fi off before you start. They work the same.
 
-- **Podcast summary.** Drop in an episode and get the full transcript, a summary,
-  chapters with timestamps you can click, and a quote checked against the transcript.
+- **Podcast summary.** Paste a link, type the name of an episode, or drop in a
+  file. Get the full transcript, a summary, chapters with timestamps you can
+  click, and a quote checked against the transcript.
 - **Offline dictation.** Talk, and the text appears while you speak.
 
 Nothing is uploaded. The browser talks to a server on `127.0.0.1`, the server
@@ -18,7 +19,7 @@ Python 3.10 or later, ffmpeg, and llama.cpp for the summary.
 
 ```bash
 python -m venv .venv && .venv/bin/pip install "nemo_toolkit[asr]" aiohttp soundfile
-brew install ffmpeg llama.cpp
+brew install ffmpeg llama.cpp yt-dlp
 ```
 
 Download both models once, with the network on:
@@ -38,6 +39,22 @@ That is 2.34 GB for Pianissimo and 2.5 GB for the summary model.
 
 Open http://127.0.0.1:8765. The first start takes a few seconds while both
 models load; after that the server is ready.
+
+## Any link, or just a name
+
+The box on the podcast page takes whatever you have:
+
+| You paste | What happens |
+|---|---|
+| A Spotify episode or show | Spotify does not hand out episode audio, and this does not try to get around that. It reads the show name and episode title from the page, finds the show's public RSS feed in Apple's podcast directory, and takes the same episode from there. Spotify exclusives have no feed and are reported as such. |
+| An Apple Podcasts link | Looked up in Apple's public directory. |
+| Sveriges Radio | Its open API, since its pages refuse plain requests. |
+| YouTube, Acast, SoundCloud and about a thousand other sites | [yt-dlp](https://github.com/yt-dlp/yt-dlp). |
+| An RSS feed, or a page with a player on it | The feed's episodes, or the audio the page plays. |
+| Just words, like `sommar i p1 zlatan` | A search for episodes in Apple's directory, Swedish storefront. |
+
+Fetching the audio is the only thing that uses the network. The page says so
+when the download is done, and the Wi-Fi can go off from there.
 
 ## How the summary stays fast
 

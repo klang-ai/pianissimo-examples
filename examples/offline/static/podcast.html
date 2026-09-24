@@ -14,17 +14,26 @@
   </header>
 
   <h1>A whole episode, read in a minute</h1>
-  <p class="lede">Transcript, summary and chapters, made on this computer. The file is never uploaded anywhere.</p>
+  <p class="lede" id="lede">Transcript, summary and chapters, made on this computer. Nothing you drop in is uploaded anywhere.</p>
+
+  <form class="find" id="find">
+    <input id="q" type="text" autocomplete="off" spellcheck="false"
+      placeholder="Paste a link, or type the name of an episode">
+    <button class="primary" type="submit" id="find-btn">Find</button>
+  </form>
+  <p class="sources">Spotify · Apple Podcasts · YouTube · Acast · Sveriges Radio · SoundCloud · any RSS feed · any page with a player</p>
+  <p class="hint" id="find-msg" hidden></p>
+  <div class="results" id="results"></div>
 
   <label class="drop" id="drop">
     <input type="file" id="file" accept="audio/*,video/*" hidden>
-    <strong>Drop a podcast here</strong>, or click to choose. MP3, M4A, WAV or video.
+    Or <strong>drop a file here</strong>. MP3, M4A, WAV or video.
   </label>
   <div class="bar" hidden id="bar"><i></i></div>
   <audio id="player" controls hidden></audio>
 
   <div class="stats" id="stats" hidden>
-    <div class="stat card"><span>Episode</span><b id="s-audio">·</b></div>
+    <div class="stat card"><span id="s-audio-label">Episode</span><b id="s-audio">·</b></div>
     <div class="stat card"><span>Transcribed in</span><b id="s-asr">·</b></div>
     <div class="stat card"><span>Summary ready</span><b id="s-sum">·</b></div>
     <div class="stat card"><span>Total</span><b id="s-total">·</b></div>
@@ -106,17 +115,63 @@ drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.ad
 drop.addEventListener('dragleave', () => drop.classList.remove('over'))
 drop.addEventListener('drop', (e) => {
   e.preventDefault(); drop.classList.remove('over')
-  if (e.dataTransfer.files[0]) run(e.dataTransfer.files[0])
+  if (e.dataTransfer.files[0]) run({ file: e.dataTransfer.files[0] })
 })
-$('file').addEventListener('change', (e) => e.target.files[0] && run(e.target.files[0]))
+$('file').addEventListener('change', (e) => e.target.files[0] && run({ file: e.target.files[0] }))
+
+const fmtDur = (d) => d ? clock(d) : ''
+$('find').addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const q = $('q').value.trim()
+  if (!q || running) return
+  $('find-btn').disabled = true
+  $('find-msg').hidden = false
+  $('find-msg').textContent = 'Looking…'
+  $('results').innerHTML = ''
+  try {
+    const res = await fetch('/api/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ q }) })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error)
+    found = data.items
+    if (found.length === 1) {
+      $('find-msg').textContent = 'Found through ' + found[0].via + '.'
+      run({ item: found[0] })
+    } else {
+      $('find-msg').textContent = `${found.length} episodes, found through ${found[0].via}. Pick one.`
+      $('results').innerHTML = found.map((it, i) => `<button class="result card" data-i="${i}">
+        ${it.image ? `<img src="${esc(it.image)}" alt="">` : '<span class="noimg"></span>'}
+        <span><b>${esc(it.title || 'Episode')}</b><small>${esc([it.show, fmtDur(it.duration)].filter(Boolean).join(' · '))}</small></span>
+      </button>`).join('')
+    }
+  } catch (err) {
+    $('find-msg').textContent = err.message
+  } finally {
+    $('find-btn').disabled = false
+  }
+})
+let found = []
+$('results').addEventListener('click', (e) => {
+  const b = e.target.closest('.result')
+  if (b) run({ item: found[Number(b.dataset.i)] })
+})
 
 let running = false
-async function run(file) {
+async function run(source) {
+  const file = source.file
+  const item = source.item
   if (running) return
   running = true
   drop.hidden = true
-  $('player').src = URL.createObjectURL(file)
-  $('player').hidden = false
+  $('find').hidden = true
+  $('find-msg').hidden = true
+  document.querySelector('.sources').hidden = true
+  $('results').innerHTML = ''
+  if (file) {
+    $('player').src = URL.createObjectURL(file)
+    $('player').hidden = false
+  }
+  $('s-audio-label').textContent = item ? 'Downloading' : 'Episode'
+  if (item) $('lede').textContent = [item.title, item.show].filter(Boolean).join(' · ')
   $('bar').hidden = false
   $('stats').hidden = false
   $('cols').hidden = false
@@ -139,10 +194,11 @@ async function run(file) {
   }, 100)
   $('s-asr').dataset.done = $('s-sum').dataset.done = ''
 
-  const body = new FormData()
-  body.append('file', file)
+  const req = file
+    ? (() => { const body = new FormData(); body.append('file', file); return { method: 'POST', body } })()
+    : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item }) }
   try {
-    const res = await fetch('/api/podcast', { method: 'POST', body })
+    const res = await fetch(file ? '/api/podcast' : '/api/podcast-url', req)
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader()
     let buf = ''
     for (;;) {
@@ -165,7 +221,16 @@ async function run(file) {
   }
 
   function handle(ev) {
-    if (ev.type === 'start') {
+    if (ev.type === 'download') {
+      $('s-audio').textContent = ev.total ? Math.round(100 * ev.done / ev.total) + ' %' : (ev.done / 1e6).toFixed(0) + ' MB'
+      if (ev.total) $('bar').firstElementChild.style.width = (100 * ev.done / ev.total) + '%'
+    } else if (ev.type === 'downloaded') {
+      $('player').src = ev.media
+      $('player').hidden = false
+      $('bar').firstElementChild.style.width = '0'
+      $('s-audio-label').textContent = 'Episode'
+      $('footnote').textContent = `Downloaded ${(ev.bytes / 1e6).toFixed(0)} MB in ${secs(ev.seconds)}. That was the last thing that needed the network, so the Wi-Fi can go off now.`
+    } else if (ev.type === 'start') {
       $('s-audio').textContent = clock(ev.audioSeconds)
       asrStart = performance.now()
     } else if (ev.type === 'piece' && ev.text) {

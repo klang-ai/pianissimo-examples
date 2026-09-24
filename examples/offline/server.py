@@ -18,6 +18,7 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -45,6 +46,7 @@ import numpy as np  # noqa: E402
 from aiohttp import WSMsgType, web  # noqa: E402
 
 import asr  # noqa: E402
+import fetch  # noqa: E402
 import summary  # noqa: E402
 
 RATE = asr.RATE
@@ -154,6 +156,32 @@ def podcast_job(engine, summarizer, path, emit):
           "totalSeconds": t_end - t_start})
 
 
+async def stream_events(request, job):
+    """Run job(emit) in a worker thread and stream what it emits as NDJSON."""
+    resp = web.StreamResponse(headers={"Content-Type": "application/x-ndjson",
+                                       "Cache-Control": "no-store"})
+    await resp.prepare(request)
+    loop = asyncio.get_running_loop()
+    queue = asyncio.Queue()
+
+    def emit(event):
+        loop.call_soon_threadsafe(queue.put_nowait, event)
+
+    def guarded():
+        try:
+            job(emit)
+        except Exception as e:  # the page should hear about it, not a stack trace
+            emit({"type": "error", "message": str(e) or type(e).__name__})
+
+    task = loop.run_in_executor(None, guarded)
+    task.add_done_callback(lambda _: loop.call_soon_threadsafe(queue.put_nowait, None))
+    while (event := await queue.get()) is not None:
+        await resp.write((json.dumps(event, ensure_ascii=False) + "\n").encode())
+    await task
+    await resp.write_eof()
+    return resp
+
+
 async def podcast(request):
     reader = await request.multipart()
     field = await reader.next()
@@ -166,27 +194,54 @@ async def podcast(request):
         while chunk := await field.read_chunk(1 << 20):
             tmp.write(chunk)
         tmp.close()
-
-        resp = web.StreamResponse(headers={"Content-Type": "application/x-ndjson",
-                                           "Cache-Control": "no-store"})
-        await resp.prepare(request)
-        loop = asyncio.get_running_loop()
-        queue = asyncio.Queue()
-
-        def emit(event):
-            loop.call_soon_threadsafe(queue.put_nowait, event)
-
         app = request.app
-        job = loop.run_in_executor(None, podcast_job, app["engine"], app["summarizer"],
-                                   tmp.name, emit)
-        job.add_done_callback(lambda _: loop.call_soon_threadsafe(queue.put_nowait, None))
-        while (event := await queue.get()) is not None:
-            await resp.write((json.dumps(event, ensure_ascii=False) + "\n").encode())
-        await job
-        await resp.write_eof()
-        return resp
+        return await stream_events(request, lambda emit: podcast_job(
+            app["engine"], app["summarizer"], tmp.name, emit))
     finally:
         os.unlink(tmp.name)
+
+
+async def resolve(request):
+    """Whatever was pasted, as a list of episodes to choose from."""
+    q = ((await request.json()).get("q") or "").strip()
+    if not q:
+        return web.json_response({"error": "Paste a link or type an episode name."}, status=400)
+    try:
+        items = await asyncio.get_running_loop().run_in_executor(None, fetch.resolve, q)
+    except fetch.NotFound as e:
+        return web.json_response({"error": str(e)}, status=404)
+    except Exception as e:
+        return web.json_response({"error": f"Could not read that: {e}"}, status=502)
+    return web.json_response({"items": items})
+
+
+async def podcast_url(request):
+    """Download the chosen episode, then run the same job as a dropped file."""
+    item = (await request.json()).get("item") or {}
+    if not item.get("audio"):
+        return web.json_response({"error": "no episode chosen"}, status=400)
+    app = request.app
+
+    def job(emit):
+        # Kept until the server stops, so the page can play and seek the episode
+        # from this machine after the Wi-Fi is off.
+        folder = tempfile.mkdtemp(dir=app["media"])
+        t0 = time.monotonic()
+        last = [0.0]
+
+        def progress(done, total):
+            now = time.monotonic()
+            if now - last[0] > 0.15:
+                last[0] = now
+                emit({"type": "download", "done": done, "total": total})
+
+        path = fetch.download(item, folder, progress)
+        emit({"type": "downloaded", "bytes": os.path.getsize(path),
+              "seconds": time.monotonic() - t0,
+              "media": "/media/" + os.path.relpath(path, app["media"])})
+        podcast_job(app["engine"], app["summarizer"], path, emit)
+
+    return await stream_events(request, job)
 
 
 # ---- dictation ---------------------------------------------------------------
@@ -312,6 +367,14 @@ async def status(request):
     })
 
 
+async def media(request):
+    root = request.app["media"]
+    path = os.path.realpath(os.path.join(root, request.match_info["path"]))
+    if not path.startswith(os.path.realpath(root) + os.sep) or not os.path.isfile(path):
+        raise web.HTTPNotFound()
+    return web.FileResponse(path)
+
+
 def page(name):
     async def handler(_):
         return web.FileResponse(os.path.join(HERE, "static", name))
@@ -338,16 +401,21 @@ def main():
     app = web.Application(client_max_size=1 << 31)
     app["engine"] = engine
     app["summarizer"] = summarizer
+    app["media"] = tempfile.mkdtemp(prefix="pianissimo-")
     app.router.add_get("/", page("index.html"))
     app.router.add_get("/podcast", page("podcast.html"))
     app.router.add_get("/dictation", page("dictation.html"))
     app.router.add_get("/api/status", status)
     app.router.add_post("/api/podcast", podcast)
+    app.router.add_post("/api/resolve", resolve)
+    app.router.add_post("/api/podcast-url", podcast_url)
     app.router.add_get("/ws/dictate", dictate)
+    app.router.add_get("/media/{path:.+}", media)
     app.router.add_static("/static", os.path.join(HERE, "static"))
     async def stop_summarizer(_):
         if summarizer:
             summarizer.stop()
+        shutil.rmtree(app["media"], ignore_errors=True)
     app.on_shutdown.append(stop_summarizer)
 
     print(f"open http://127.0.0.1:{args.port}", file=sys.stderr)
