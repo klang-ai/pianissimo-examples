@@ -163,3 +163,31 @@ audio { width: 100%; margin-top: 16px; }
 .answer .q { font-weight: 600; margin: 0 0 4px; }
 .answer .a { margin: 0; }
 .answer .hint { margin: 6px 0 0; }
+
+/* ---- archive ---- */
+.find select {
+  font: inherit; font-size: 15px; color: var(--ink); background: var(--raise);
+  border: 1px solid var(--rule); border-radius: 999px; padding: 0 14px;
+}
+.search-all { margin-top: 28px; }
+.hits { display: grid; gap: 8px; margin-top: 12px; }
+.hit { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 16px; text-align: left; padding: 12px 14px; border-radius: 10px; font-weight: 400; }
+@media (max-width: 720px) { .hit { grid-template-columns: none; } }
+.hit:hover { border-color: var(--accent); }
+.hit .where { font-weight: 600; font-size: 14px; }
+.hit .where small { display: block; color: var(--faint); font-weight: 400; margin-top: 2px; }
+.hit .ts { display: inline-block; margin-bottom: 4px; }
+.hit .said { font-size: 14px; color: var(--muted); }
+.hit mark { background: var(--accent-soft); color: var(--ink); border-radius: 3px; padding: 0 2px; }
+.queue-label { margin-top: 36px; }
+.queue { display: grid; gap: 8px; }
+.row { position: relative; overflow: hidden; display: flex; gap: 12px; align-items: center; padding: 10px; border-radius: 10px; }
+.row img, .row .noimg { width: 44px; height: 44px; border-radius: 6px; object-fit: cover; flex: 0 0 44px; background: var(--accent-soft); }
+.row .t { flex: 1; min-width: 0; }
+.row .t b { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row small { display: block; font-size: 12px; color: var(--faint); }
+.row .s { text-align: right; flex: 0 0 auto; }
+.pill { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.row.done .pill { color: var(--ok); }
+.row.error .pill { color: var(--warn); }
+.row .p { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); transition: width .4s; }

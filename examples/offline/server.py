@@ -45,6 +45,7 @@ if args.online:
 import numpy as np  # noqa: E402
 from aiohttp import WSMsgType, web  # noqa: E402
 
+import archive  # noqa: E402
 import ask  # noqa: E402
 import asr  # noqa: E402
 import clip  # noqa: E402
@@ -307,6 +308,42 @@ async def ask_episode(request):
     return await stream_events(request, run)
 
 
+async def archive_status(request):
+    return web.json_response({"episodes": request.app["archive"].status(),
+                              "root": archive.ROOT})
+
+
+async def archive_add(request):
+    """Queue episodes: either a list the page already has, or a show to look up."""
+    body = await request.json()
+    items = body.get("items")
+    if not items:
+        q = (body.get("q") or "").strip()
+        limit = int(body.get("limit") or 10)
+        try:
+            items = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: fetch.resolve(q, limit=limit))
+        except fetch.NotFound as e:
+            return web.json_response({"error": str(e)}, status=404)
+        items = items[:limit]
+    added = request.app["archive"].add(items)
+    return web.json_response({"added": added, "found": len(items)})
+
+
+async def archive_search(request):
+    q = request.query.get("q", "").strip()
+    hits = request.app["archive"].search(q) if q else []
+    return web.json_response({"hits": hits})
+
+
+async def archive_media(request):
+    root = os.path.join(archive.ROOT, "media")
+    path = os.path.realpath(os.path.join(root, request.match_info["path"]))
+    if not path.startswith(os.path.realpath(root) + os.sep) or not os.path.isfile(path):
+        raise web.HTTPNotFound()
+    return web.FileResponse(path)
+
+
 # ---- dictation ---------------------------------------------------------------
 
 # Re-transcribe the open segment each time this much new audio has arrived.
@@ -466,6 +503,7 @@ def main():
     app["summarizer"] = summarizer
     app["media"] = tempfile.mkdtemp(prefix="pianissimo-")
     app["jobs"] = {}
+    app["archive"] = archive.Archive(engine)
     app.router.add_get("/", page("index.html"))
     app.router.add_get("/podcast", page("podcast.html"))
     app.router.add_get("/dictation", page("dictation.html"))
@@ -475,6 +513,11 @@ def main():
     app.router.add_post("/api/podcast-url", podcast_url)
     app.router.add_post("/api/clip", make_clip)
     app.router.add_post("/api/ask", ask_episode)
+    app.router.add_get("/archive", page("archive.html"))
+    app.router.add_get("/api/archive", archive_status)
+    app.router.add_post("/api/archive", archive_add)
+    app.router.add_get("/api/archive/search", archive_search)
+    app.router.add_get("/archive-media/{path:.+}", archive_media)
     app.router.add_get("/ws/dictate", dictate)
     app.router.add_get("/media/{path:.+}", media)
     app.router.add_static("/static", os.path.join(HERE, "static"))

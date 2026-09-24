@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -30,6 +31,14 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
 ITUNES = "{http://www.itunes.com/dtds/podcast-1.0.dtd}"
 AUDIO_EXT = (".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".mp4", ".webm")
 MAX_LIST = 8
+# How many episodes a show or search returns. The podcast page wants a short
+# list to pick from; the archive wants the whole back catalogue. Per thread,
+# because each request is resolved on its own worker thread.
+_limit = threading.local()
+
+
+def _max():
+    return getattr(_limit, "n", MAX_LIST)
 
 
 class NotFound(Exception):
@@ -155,7 +164,7 @@ def from_spotify(url):
         if not feeds:
             raise NotFound(f"{show or 'This show'} has no public feed. It may be a Spotify exclusive.")
         _, items = read_feed(feeds[0]["feedUrl"])
-        return [dict(i, via="Spotify, then the show's public RSS feed") for i in items[:MAX_LIST]]
+        return [dict(i, via="Spotify, then the show's public RSS feed") for i in items[:_max()]]
     # og:description reads "Show name · Episode".
     show = desc.split(" · ")[0].strip() if " · " in desc else None
     if not (title and show):
@@ -191,7 +200,7 @@ def from_apple(url):
         for r in found.get("results", []):
             if r.get("feedUrl"):
                 _, items = read_feed(r["feedUrl"])
-                return [dict(i, via="Apple Podcasts, then the RSS feed") for i in items[:MAX_LIST]]
+                return [dict(i, via="Apple Podcasts, then the RSS feed") for i in items[:_max()]]
     raise NotFound("Apple Podcasts did not return an episode for that link.")
 
 
@@ -224,7 +233,7 @@ def from_ytdlp(url):
         return [episode(e.get("title"), e.get("url") or e.get("webpage_url"),
                         show=info.get("title"), duration=e.get("duration"),
                         via=f"{site}, through yt-dlp", page=e.get("url"), kind="ytdlp")
-                for e in info["entries"][:MAX_LIST] if e.get("url") or e.get("webpage_url")]
+                for e in info["entries"][:_max()] if e.get("url") or e.get("webpage_url")]
     return [episode(info.get("title"), info.get("webpage_url") or url,
                     show=info.get("uploader") or info.get("channel") or info.get("series"),
                     duration=info.get("duration"), image=info.get("thumbnail"),
@@ -249,14 +258,14 @@ def from_page(url, page):
         if hit:
             return [dict(hit, via="the page's RSS feed")]
         _, items = read_feed(feed_url)
-        return [dict(i, via="the page's RSS feed") for i in items[:MAX_LIST]]
+        return [dict(i, via="the page's RSS feed") for i in items[:_max()]]
     return None
 
 
 def search(text):
     q = urllib.parse.quote(text)
     found = get_json(f"https://itunes.apple.com/search?media=podcast&entity=podcastEpisode"
-                     f"&country=se&limit={MAX_LIST}&term={q}")
+                     f"&country=se&limit={min(_max(), 200)}&term={q}")
     items = [episode(r.get("trackName"), r["episodeUrl"], show=r.get("collectionName"),
                      duration=(r.get("trackTimeMillis") or 0) // 1000 or None,
                      image=r.get("artworkUrl160"), via="search in Apple Podcasts",
@@ -267,8 +276,9 @@ def search(text):
     return items
 
 
-def resolve(text):
+def resolve(text, limit=MAX_LIST):
     """A list of episodes for whatever was pasted. Raises NotFound with a reason."""
+    _limit.n = limit
     text = text.strip()
     if not re.match(r"https?://", text):
         if re.match(r"[\w-]+(\.[\w-]+)+/", text):
@@ -300,7 +310,7 @@ def resolve(text):
     head = body[:400].decode("utf-8", "replace").lstrip()
     if "xml" in ctype or head.startswith("<?xml") or "<rss" in head:
         _, items = read_feed(final)
-        return [dict(i, via="RSS feed") for i in items[:MAX_LIST]]
+        return [dict(i, via="RSS feed") for i in items[:_max()]]
 
     hit = from_ytdlp(text)
     if hit:

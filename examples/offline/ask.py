@@ -36,8 +36,12 @@ def _stems(text):
     return [w[:STEM] for w in words if w not in STOP and len(w) > 1]
 
 
-def search(pieces, question, top=TOP):
-    """The pieces most likely to hold the answer, in episode order. BM25."""
+def search(pieces, question, top=TOP, ordered=True):
+    """The pieces most likely to hold the answer. BM25.
+
+    In episode order by default, which is how the model should read them;
+    best first with ordered=False, which is how a search result should list them.
+    """
     docs = [Counter(_stems(t)) for _, t in pieces]
     if not docs:
         return []
@@ -56,7 +60,7 @@ def search(pieces, question, top=TOP):
             score += idf * tf * 2.2 / (tf + 1.2 * (0.25 + 0.75 * length / avg))
         scores.append((score, i))
     best = sorted([s for s in scores if s[0] > 0], reverse=True)[:top]
-    return sorted(i for _, i in best)
+    return sorted(i for _, i in best) if ordered else [i for _, i in best]
 
 
 def excerpt(pieces, indices, stamp):
