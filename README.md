@@ -10,8 +10,8 @@ example says which one it uses.
 
 - **Locally.** The open weights on your own machine. No API key, and the audio stays on the
   machine. Slower than a GPU server.
-- **Hosted.** Berget AI's realtime endpoint, streaming over a WebSocket. Needs a key, and
-  gives you text back while the audio is still playing.
+- **Hosted.** A realtime endpoint, streaming over a WebSocket, which gives you text back
+  while the audio is still playing. Today that is Berget AI, and it needs a key.
 
 | Example | What it does | Runs |
 |---|---|---|
