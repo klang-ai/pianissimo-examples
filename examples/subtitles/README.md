@@ -1,56 +1,30 @@
 # Subtitle a Swedish video
 
-Create an `.srt` file from Swedish audio or video. Pianissimo gives a timing for every word,
-and `cues.py` groups the words into subtitle lines with the limits listed below. The first
-thing we built on the model. Runs locally: no API key, no account, no upload.
+Creates an `.srt` file from Swedish audio or video on your own machine. Pianissimo gives a
+timing for every word, and `cues.py` groups the words into subtitle lines.
 
 ![A 1937 Swedish newsreel with subtitles generated on a laptop](sattmaskinen.gif)
 
 *Varje dag en världsrevy (AB Svensk Filmindustri, 1937), public domain via Wikimedia Commons,
-cut to the parts with speech. Subtitled by Pianissimo on a laptop CPU, network off.*
+cut to the parts with speech. Subtitled on a laptop CPU with the network off.*
 
-Measured once: the full fourteen minute film took 17 seconds on a MacBook CPU, 50 times
-faster than real time.
+## Install
 
-## Setup
-
-Python 3.10 or later, and ffmpeg.
-
-Run everything from the repo root.
+Python 3.10 or later, and ffmpeg. From the repo root:
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install "nemo_toolkit[asr]"
 brew install ffmpeg
 ```
 
-The first run downloads 2.34 GB of weights and caches them. `nemo_toolkit[asr]` pulls
-PyTorch, about 1.7 GB.
-
 ## Run
-
-```bash
-.venv/bin/python examples/subtitles/subtitle.py examples/berget-realtime/repro/counting-sv.wav
-```
-
-That writes `counting-sv.srt` next to the clip; compare it with `sample.srt` in this
-folder. Then your own file:
 
 ```bash
 .venv/bin/python examples/subtitles/subtitle.py talk.mp4
 ```
 
-Writes `talk.srt` next to the input. Takes any file ffmpeg reads; audio is extracted to mono
-16 kHz internally.
-
-```
-talk.mp4: 12.2 s of audio
-loading KlangAI/pianissimo-sv on cpu
-loaded in 5.6 s
-transcribed in 0.8 s, 15x realtime
-21 words in 4 cues -> talk.srt
-```
-
-`--verbose` restores NeMo's own logging, which is loud but says what went wrong.
+Writes `talk.srt` next to the input. Takes any file ffmpeg reads. `sample.srt` is the output
+for `samples/counting-sv.wav`. `--verbose` shows NeMo's own logging.
 
 ## Burn the text into the picture
 
@@ -58,31 +32,10 @@ transcribed in 0.8 s, 15x realtime
 ./examples/subtitles/burn-in.sh talk.mp4 talk.srt
 ```
 
-Writes `talk-subtitled.mp4`, for social platforms where a sidecar subtitle file is ignored or
-off by default. Keep the `.srt` for players that handle it.
+Writes `talk-subtitled.mp4`, for platforms that ignore a separate subtitle file. Needs an
+ffmpeg with libass: `brew install ffmpeg-full`. The script finds it without a change to `PATH`.
 
-Needs an ffmpeg built with libass. Homebrew's `ffmpeg` bottle is not, and reports the missing
-filter as a syntax error in the filter string. The script checks first and names the cause:
-`brew install ffmpeg-full`.
-
-## What comes out
-
-The clip above, as an `.srt`:
-
-```
-9
-00:00:27,440 --> 00:00:31,028
-skeppet. Allt går svindlande fort,
-men ibland blir det stopp.
-```
-
-`sample.srt` in this directory is the real output for the bundled clip.
-
-## How the cues are built
-
-The model gives one timing per word. `cues.py` turns that into lines short enough to read, on
-screen long enough to read, broken where the sentence breaks. The limits follow broadcast
-convention:
+## Cue rules
 
 | | |
 |---|---|
@@ -91,21 +44,15 @@ convention:
 | Duration | 1.0 s minimum, 6.0 s maximum |
 | Forced break | 0.7 s of silence |
 
-Cues too brief to read borrow from the silence after them, never from the next cue. Start
-times are never moved, so a subtitle never appears before the word is spoken.
+Start times are never moved, so a subtitle never appears before the word is spoken.
 
 ## Limits
 
-- **Fast speech outruns the reading speed.** Cues are never condensed, so when someone talks
-  faster than 17 characters per second the cue stays dense rather than losing words. On ten
-  minutes of fast parliamentary debate, 34 of 148 cues exceed it. Broadcast subtitlers
-  paraphrase to fix this; a transcript should not.
-- **Long files are transcribed in one pass and held in memory.** Ten minutes of audio peaked
-  at 8.5 GB of resident memory in one measurement, and it scales with duration. Cut files
-  longer than about twenty minutes first.
-- Timings come from the model. Music and overlapping speech move them.
-- No speaker labels. One speaker per cue is assumed.
-- Swedish only. The model is monolingual.
+- Cues are never shortened, so fast speech can exceed 17 characters per second.
+- Recordings longer than 20 minutes are transcribed in 20-minute pieces. A two-hour recording
+  used 16 GB of memory on an Apple M5 CPU.
+- Music and overlapping speech shift the timings.
+- No speaker labels. Swedish only.
 
 ---
 

@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import warnings
+import wave
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cues as cuelib
@@ -60,6 +61,14 @@ class _QuietStderr:
 
 MODEL = "KlangAI/pianissimo-sv"
 RATE = 16000
+# Files longer than CHUNK_SECONDS are transcribed in pieces, which uses less
+# memory and runs faster on recordings of an hour or more. Shorter files are one
+# piece and come out exactly as before. The pieces are long on purpose: the
+# model's output depends on how much context it gets, and short pieces change it.
+# Pieces overlap, and each word is kept from the piece where its midpoint falls
+# inside the non-overlapping part, so a word cut at a boundary is kept once.
+CHUNK_SECONDS = 1200
+OVERLAP_SECONDS = 10
 
 
 def probe(path):
@@ -94,6 +103,33 @@ def extract_audio(path, dest):
     )
 
 
+def split_audio(wav, dest_dir):
+    """Cut the extracted audio into overlapping pieces.
+
+    Returns (path, offset, keep_from, keep_to) per piece, in seconds. A word is
+    kept when its midpoint falls in [keep_from, keep_to).
+    """
+    with wave.open(wav, "rb") as src:
+        params = src.getparams()
+        total = src.getnframes()
+        chunk = CHUNK_SECONDS * RATE
+        half = OVERLAP_SECONDS * RATE // 2
+        pieces = []
+        start = 0
+        while start < total:
+            end = min(start + chunk, total)
+            lo = max(start - half, 0)
+            hi = min(end + half, total)
+            src.setpos(lo)
+            path = os.path.join(dest_dir, f"piece-{len(pieces):04d}.wav")
+            with wave.open(path, "wb") as out:
+                out.setparams(params)
+                out.writeframes(src.readframes(hi - lo))
+            pieces.append((path, lo / RATE, start / RATE, end / RATE))
+            start = end
+    return pieces
+
+
 def word_timings(hypothesis):
     """Pull word level timings out of whatever shape this NeMo version returns.
 
@@ -113,8 +149,6 @@ def word_timings(hypothesis):
         if not text:
             continue
         words.append({"word": text, "start": float(w["start"]), "end": float(w["end"])})
-    if not words:
-        sys.exit("No speech found in the audio.")
     return words
 
 
@@ -160,9 +194,10 @@ def main():
         model = ASRModel.from_pretrained(model_name=MODEL, map_location=device).eval()
         print(f"loaded in {time.monotonic() - t0:.1f} s", file=sys.stderr)
 
+        pieces = split_audio(wav, tmp)
         t0 = time.monotonic()
         with torch.inference_mode():
-            result = model.transcribe(audio=[wav], batch_size=1,
+            result = model.transcribe(audio=[p[0] for p in pieces], batch_size=1,
                                       return_hypotheses=True, timestamps=True,
                                       verbose=args.verbose)
         elapsed = time.monotonic() - t0
@@ -170,7 +205,16 @@ def main():
     # Some versions hand back (hypotheses, all_hypotheses).
     if isinstance(result, tuple):
         result = result[0]
-    words = word_timings(result[0])
+
+    words = []
+    for (_, offset, keep_from, keep_to), hypothesis in zip(pieces, result):
+        for w in word_timings(hypothesis):
+            w["start"] += offset
+            w["end"] += offset
+            if keep_from <= (w["start"] + w["end"]) / 2 < keep_to:
+                words.append(w)
+    if not words:
+        sys.exit("No speech found in the audio.")
 
     cues = cuelib.fit_timings(cuelib.split_into_cues(words))
     with open(out_path, "w", encoding="utf-8") as f:
