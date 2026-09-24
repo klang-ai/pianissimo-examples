@@ -17,7 +17,7 @@ weights, no API key, or streamed live through Berget AI's hosted realtime endpoi
 ## Local: run the weights yourself
 
 ```bash
-python -m venv .venv && .venv/bin/pip install "nemo_toolkit[asr]"
+python3 -m venv .venv && .venv/bin/pip install "nemo_toolkit[asr]"
 .venv/bin/python python/transcribe-offline.py your-audio.wav
 ```
 
@@ -34,7 +34,8 @@ Measured on an M-series MacBook, CPU only, 45.8 seconds of Swedish speech:
 | Model load, cached | 5.7 s |
 | Transcription | 1.4 to 1.6 s, about 30x realtime |
 
-The launch figures are from an H100.
+The model card's throughput figures are from GPUs (an A100 for the table, an H100 for the
+headline), so they are not comparable with these.
 
 ## Hosted: the realtime endpoint on Berget
 
@@ -182,5 +183,5 @@ with a release planned the same day. The output above is from before the fix.
 
 MIT, see `LICENSE`. It covers the example code only; no weights ship with this repository.
 
-The model is published as `cc-by-4.0` on Hugging Face and listed as `Apache 2.0` in Berget's
-model catalog. Check which applies before building on it commercially.
+The model weights are licensed CC BY 4.0; see the
+[model card](https://huggingface.co/KlangAI/pianissimo-sv).
