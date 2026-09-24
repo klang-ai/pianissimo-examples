@@ -186,9 +186,12 @@ def render(job, words, out_path):
         f.write(ass(words, t0))
 
     show = _drawtext_escape((job.get("show") or "").upper())
-    title = _drawtext_escape(job.get("title") or "")
-    if len(title) > 44:
-        title = title[:42].rstrip() + "…"
+    # 1080 px holds about 34 characters at this size; ffmpeg's drawtext does
+    # not wrap, so anything longer is cut, not squeezed.
+    title = job.get("title") or ""
+    if len(title) > 34:
+        title = title[:32].rstrip() + "…"
+    title = _drawtext_escape(title)
     credit = _drawtext_escape("Transcribed on a laptop with Pianissimo, offline")
     font = "font='Avenir Next Medium'"
     graph = (

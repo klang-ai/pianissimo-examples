@@ -1,10 +1,20 @@
-# Podcasts and dictation, on your own machine
+# Any podcast, on your own machine
 
-Four local apps built on Pianissimo: podcast transcripts and summaries, dictation, a
-searchable podcast archive, and a comparison of two episodes. Pianissimo does the speech to
-text; summaries and answers come from a small language model, Qwen3 4B through llama.cpp.
-Both run on your machine, behind a local web server. Download the models, and any episodes
-you want, before going offline.
+Paste a podcast, get the transcript, a summary with chapters, and a vertical clip of any
+quote. Pianissimo does the speech to text; summaries and answers come from a small language
+model, Qwen3 4B through llama.cpp. Both run on your machine, behind a local web server.
+Download the models, and any episodes you want, before going offline.
+
+![The podcast page: a 52 minute episode transcribed in 52 s, summary 10 s later](podcast-page.png)
+
+![A frame from a clip: the quote fills in word by word over a waveform](clip-frame.png)
+
+*Left: a 52 minute episode, transcribed in 52 s on a MacBook Pro M5, summary ready 10 s
+later. Right: a clip made from one sentence of a P1 Kultur report, 8 minutes transcribed in
+6 s. The captions light up word by word as it is spoken.*
+
+The same server has three more pages: dictation, a searchable archive of a whole show, and
+a comparison of two episodes.
 
 Reviewing the code rather than running it? Start with [REVIEW.md](REVIEW.md).
 
