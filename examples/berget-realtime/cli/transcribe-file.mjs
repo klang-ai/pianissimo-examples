@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Stream a WAV file to Klang Pianissimo on Berget AI and print text as it arrives.
 //
-//   node cli/transcribe-file.mjs audio.wav
-//   node cli/transcribe-file.mjs audio.wav --chunk-seconds 2
-//   node cli/transcribe-file.mjs audio.wav --server-default  (leave chunk_seconds unset)
-//   node cli/transcribe-file.mjs audio.wav --fast          (send faster than realtime)
+//   node examples/berget-realtime/cli/transcribe-file.mjs audio.wav
+//   node examples/berget-realtime/cli/transcribe-file.mjs audio.wav --chunk-seconds 2
+//   node examples/berget-realtime/cli/transcribe-file.mjs audio.wav --server-default  (leave chunk_seconds unset)
+//   node examples/berget-realtime/cli/transcribe-file.mjs audio.wav --fast          (send faster than realtime)
 
 import WebSocket from 'ws'
 import { readWav } from '../lib/wav.mjs'
@@ -18,7 +18,7 @@ const flag = (name, fallback) => {
 }
 
 if (!file) {
-  console.error('usage: node cli/transcribe-file.mjs <file.wav> [--chunk-seconds N] [--server-default] [--fast]')
+  console.error('usage: node examples/berget-realtime/cli/transcribe-file.mjs <file.wav> [--chunk-seconds N] [--server-default] [--fast]')
   process.exit(1)
 }
 

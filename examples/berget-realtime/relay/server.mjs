@@ -9,7 +9,7 @@
 // It forwards frames verbatim in both directions: the browser code is the same
 // code you would write against Berget, minus the credential.
 //
-//   BERGET_API_KEY=... node relay/server.mjs
+//   BERGET_API_KEY=... node examples/berget-realtime/relay/server.mjs
 //   open http://localhost:8787
 
 import http from 'node:http'
@@ -26,14 +26,24 @@ if (!key) {
 }
 
 const PORT = Number(process.env.PORT || 8787)
+// Only this machine, and only pages this relay served itself. Anything else
+// connecting here would be spending the key's credit.
+const HOST = '127.0.0.1'
+const ORIGINS = new Set([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`])
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'browser')
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' }
 
 const server = http.createServer((req, res) => {
-  const rel = req.url === '/' ? 'index.html' : decodeURIComponent(req.url.slice(1))
+  let rel
+  try {
+    rel = req.url === '/' ? 'index.html' : decodeURIComponent(req.url.split('?')[0].slice(1))
+  } catch {
+    res.writeHead(400).end('bad request')
+    return
+  }
   const file = path.join(root, rel)
 
-  if (!file.startsWith(root)) {
+  if (!file.startsWith(root + path.sep)) {
     res.writeHead(403).end('forbidden')
     return
   }
@@ -48,7 +58,10 @@ const server = http.createServer((req, res) => {
   })
 })
 
-new WebSocketServer({ server }).on('connection', (client) => {
+// Checked before the upgrade, so a refused client never opens a connection to Berget.
+const verifyClient = ({ origin }) => ORIGINS.has(origin)
+
+new WebSocketServer({ server, verifyClient }).on('connection', (client) => {
   const upstream = new WebSocket(ENDPOINT, { headers: { Authorization: `Bearer ${key}` } })
   const queued = []
 
@@ -81,4 +94,4 @@ new WebSocketServer({ server }).on('connection', (client) => {
   client.on('error', () => upstream.close())
 })
 
-server.listen(PORT, () => console.log(`relay on http://localhost:${PORT}`))
+server.listen(PORT, HOST, () => console.log(`relay on http://localhost:${PORT}`))
