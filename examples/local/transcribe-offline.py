@@ -4,7 +4,7 @@
 No API key, no network after the first run: the weights are downloaded from
 Hugging Face once and cached.
 
-    python python/transcribe-offline.py audio.wav
+    python examples/local/transcribe-offline.py audio.wav
 
 Input must be mono 16 kHz. The model was trained at that rate.
 """
