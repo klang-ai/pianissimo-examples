@@ -6,14 +6,13 @@ timing for every word, and `cues.py` groups the words into subtitle lines.
 ![A 1937 Swedish newsreel with subtitles generated on a laptop](sattmaskinen.gif)
 
 *Varje dag en världsrevy (AB Svensk Filmindustri, 1937), public domain via Wikimedia Commons,
-cut to the parts with speech. Subtitled on a laptop CPU with the network off.*
+cut to the parts with speech. Subtitled on a laptop CPU.*
 
 ## Install
 
-Python 3.10 or later, and ffmpeg. From the repo root:
+Python 3.10 or later. Install from the [repo root](../../#install), then ffmpeg:
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install "nemo_toolkit[asr]"
 brew install ffmpeg
 ```
 
@@ -26,6 +25,10 @@ brew install ffmpeg
 Writes `talk.srt` next to the input. Takes any file ffmpeg reads. `sample.srt` is the output
 for `samples/counting-sv.wav`. `--verbose` shows NeMo's own logging.
 
+Cues are at most 2 lines of 42 characters, 17 characters per second, 1 to 6 seconds long, and
+break on 0.7 s of silence. Start times are never moved, so a subtitle never appears before the
+word is spoken. The rules are at the top of `cues.py`.
+
 ## Burn the text into the picture
 
 ```bash
@@ -34,17 +37,6 @@ for `samples/counting-sv.wav`. `--verbose` shows NeMo's own logging.
 
 Writes `talk-subtitled.mp4`, for platforms that ignore a separate subtitle file. Needs an
 ffmpeg with libass: `brew install ffmpeg-full`. The script finds it without a change to `PATH`.
-
-## Cue rules
-
-| | |
-|---|---|
-| Line length | 42 characters, 2 lines maximum |
-| Reading speed | 17 characters per second |
-| Duration | 1.0 s minimum, 6.0 s maximum |
-| Forced break | 0.7 s of silence |
-
-Start times are never moved, so a subtitle never appears before the word is spoken.
 
 ## Limits
 

@@ -11,8 +11,7 @@ The transcript goes to stdout, load and transcription times to stderr.
 
 ## Input
 
-Mono 16 kHz PCM16 WAV, the rate the model was trained at. The script rejects anything else. To
-convert:
+Mono 16 kHz PCM16 WAV. The script rejects anything else. To convert:
 
 ```bash
 ffmpeg -i input.m4a -ac 1 -ar 16000 -c:a pcm_s16le input.wav

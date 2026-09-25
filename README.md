@@ -6,12 +6,10 @@ Swedish speech-to-text model.
 | Example | What it does | Runs |
 |---|---|---|
 | [`examples/subtitles/`](examples/subtitles/) | Swedish audio or video in, `.srt` out | Locally |
-| [`examples/local/`](examples/local/) | Transcribes one WAV file. Start here to check your setup | Locally |
+| [`examples/local/`](examples/local/) | Transcribes one WAV file | Locally |
 | [`examples/berget-realtime/`](examples/berget-realtime/) | Streams a file or the microphone and prints text as it arrives | Berget AI |
 
-Local examples run the open weights on your own machine: no API key, and the audio stays on
-the machine. The hosted example streams audio to Berget AI's realtime endpoint, the only
-hosted endpoint these examples support, and needs a Berget API key.
+The local examples need no API key. The Berget example needs one from [berget.ai](https://berget.ai).
 
 [![Varje dag en världsrevy (1937), subtitled by Pianissimo on a laptop CPU](examples/subtitles/sattmaskinen.gif)](examples/subtitles/)
 

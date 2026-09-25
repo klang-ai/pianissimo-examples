@@ -4,9 +4,6 @@ Streams a WAV file or the microphone to Pianissimo on [Berget AI](https://berget
 endpoint and prints text as it arrives. The model runs on Berget, not on your machine, and you
 need a Berget API key.
 
-`cli/` streams a file, `browser/` streams the microphone through `relay/`, and `lib/` holds
-the session messages and a WAV reader they share.
-
 ## Install
 
 Node 20 or later, and an API key from [berget.ai](https://berget.ai). From the repo root:
@@ -30,9 +27,6 @@ Input is PCM16 mono WAV. The server resamples rates other than 16 kHz.
 | `--server-default` | Use the server's segment length, 28 s. Shorter audio returns as one transcript at the end |
 | `--fast` | Sends audio faster than realtime, for testing |
 
-`chunk_seconds` belongs under `session.audio.input.transcription`. The server ignores it
-anywhere else, and `session.updated` shows the value it applied.
-
 ## Transcribe the microphone
 
 ```bash
@@ -40,8 +34,8 @@ node examples/berget-realtime/relay/server.mjs
 open http://localhost:8787
 ```
 
-Press Start, speak Swedish, press Stop. Browsers cannot set an `Authorization` header on a
-WebSocket, so the relay holds the key. It listens on 127.0.0.1 only.
+Press Start, speak Swedish, press Stop. The relay in `relay/` holds the API key, since a browser
+cannot send it on a WebSocket. It listens on 127.0.0.1 only.
 
 ---
 
